@@ -4,7 +4,8 @@ import { useStore, go, openModal, setUI, commit } from '../store';
 import { Headshot, Btn, MONTHS, DAYS, seasonLabel, condWord, Logo } from '../util';
 import { Bracket } from '../Bracket';
 import { openRequest, needDef, needMetric } from '../../sim/needs';
-import { sim, watchNext, nextUserGame, lastUserGame, runCommand } from '../actions';
+import { sim, watchNext, nextUserGame, lastUserGame, runCommand, attendSeries, autopilot } from '../actions';
+import { allDelegated } from '../../sim/delegate';
 import { makeGameplan } from '../../sim/coach';
 import { standings } from '../../sim/league';
 import { divisionPlace, shortName } from '../Chrome';
@@ -195,6 +196,8 @@ function GameControls({ w }: { w: World }) {
     </>}
     {S.phase === 'playoffs' && <>
       {alive && <Btn kind="prim" onClick={() => watchNext()}>Watch our next game</Btn>}
+      {S.playoffs!.series.filter(s => s.round === S.playoffs!.round && !s.winner && s.hi !== u && s.lo !== u).slice(0, alive ? 2 : 3).map(s =>
+        <Btn kind={alive ? '' : 'prim'} onClick={() => attendSeries(s.id)}>Attend {w.teams[s.hi].abbr}–{w.teams[s.lo].abbr} G{s.wHi + s.wLo + 1}</Btn>)}
       <Btn onClick={() => sim('round')}>Sim the round</Btn>
       <Btn kind="ghost" onClick={() => sim('playoffs')}>Sim the playoffs</Btn>
     </>}
@@ -203,6 +206,7 @@ function GameControls({ w }: { w: World }) {
       <Btn kind="prim" onClick={() => go('office', 'contracts')}>Re-sign players</Btn>
       <Btn onClick={() => go('office', 'fa')}>Free agents</Btn>
     </>}
+    <Btn kind={allDelegated(w) ? 'prim' : 'ghost'} onClick={() => autopilot()}>Autopilot</Btn>
   </section>;
 }
 

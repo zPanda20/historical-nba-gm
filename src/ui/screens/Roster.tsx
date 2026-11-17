@@ -9,7 +9,7 @@ import type { Player, World } from '../../sim/types';
 export function moraleWord(m: number) { return m >= 75 ? 'Happy' : m >= 55 ? 'Content' : m >= 35 ? 'Restless' : 'Unhappy'; }
 
 const ROLE_ORDER: Record<string, number> = { Starter: 0, Rotation: 1, 'Spot minutes': 2, Bench: 3, Injured: 4 };
-function roles(w: World) {
+export function roles(w: World) {
   const t = w.teams[w.meta.userTeam];
   const plan = makeGameplan(w, t, w.coaches[t.coach]);
   const out: Record<string, { role: string; min: number }> = {};

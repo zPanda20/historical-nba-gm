@@ -1,5 +1,8 @@
 import { useStore, openModal, commit, toast } from '../store';
-import { Panel, Btn, Meter, Headshot, Chip } from '../util';
+import { DELEG, delegation, delegLog, allDelegated, runDelegates } from '../../sim/delegate';
+import type { DelegKey } from '../../sim/delegate';
+import { autopilot } from '../actions';
+import { Panel, Btn, Meter, Headshot, Chip, Tabs, curTab, dateShort } from '../util';
 import { ReqPanel } from '../deal';
 import type { Coach } from '../../sim/types';
 
@@ -23,9 +26,10 @@ export function Staff() {
   const avail = Object.values(w!.coaches).filter(x => !x.team && x.id !== c.id);
   const reqs = Object.entries(t.minutesRequests ?? {});
   const hurt = t.roster.map(id => w!.players[id]).filter(p => p.injury && p.injury.daysLeft > 0);
+  const tab = curTab('staff', 'coaches');
   return <div class="screen">
-    <div class="screen-h"><h2>Staff</h2><div class="screen-meta">The coach runs the floor. You hire, support and — if it comes to that — replace him.</div></div>
-    <div class="staff-grid">
+    <div class="screen-h"><h2>Staff</h2><Tabs id="staff" def="coaches" tabs={[{ id: 'coaches', label: 'Coaching staff' }, { id: 'deleg', label: 'Delegation' }]} /><div class="screen-meta">{tab === 'deleg' ? 'Hand off what you don’t want to handle yourself' : 'The coach runs the floor. You hire, support and replace him.'}</div></div>
+    {tab === 'deleg' ? <Delegation /> : <div class="staff-grid">
       <Panel title="Head coach" right={<span class="muted">Trust in you: {Math.round(c.trustGM ?? 55)}</span>}>
         <CoachCard c={c} />
         <div class="row-btns">
@@ -53,6 +57,28 @@ export function Staff() {
           <Btn kind="ghost sm" onClick={() => openModal('fireCoach', { id: x.id })}>Hire {x.name.split(' ').slice(-1)[0]}</Btn>
         </div>)}
       </Panel>
-    </div>
+    </div>}
+  </div>;
+}
+
+function Delegation() {
+  const { world: w } = useStore();
+  const D = delegation(w!);
+  const set = (k: DelegKey, v: boolean) => { D[k] = v; if (v) runDelegates(w!); commit(); };
+  const all = allDelegated(w!);
+  const L = delegLog(w!);
+  return <div class="deleg">
+    <Panel title="Who decides" right={<span>{DELEG.filter(d => D[d.key]).length} of {DELEG.length} delegated</span>}>
+      {DELEG.map(d => <div class={`dg ${D[d.key] ? 'on' : ''}`}>
+        <div class="dg-t"><b>{d.label}</b><span>{d.who} · {d.desc}</span></div>
+        <div class="seg sm"><button data-nav class={!D[d.key] ? 'on' : ''} onClick={() => set(d.key, false)}>You</button><button data-nav class={D[d.key] ? 'on' : ''} onClick={() => set(d.key, true)}>Staff</button></div>
+      </div>)}
+      <div class="row-btns">
+        <Btn kind={all ? 'ghost' : 'prim'} onClick={() => { DELEG.forEach(d => (D[d.key] = !all)); if (!all) runDelegates(w!); commit(); toast(all ? 'Every decision is yours again.' : 'Your staff has the keys.'); }}>{all ? 'Take everything back' : 'Hand everything to staff'}</Btn>
+        <Btn onClick={() => autopilot()}>Run on autopilot</Btn>
+      </div>
+      <div class="muted small">Autopilot advances day after day — through the playoffs, draft and offseason if those are delegated — and stops when something lands that nobody was given authority over. Press Stop (or Esc) any time.</div>
+    </Panel>
+    <Panel title="What your staff did">{L.length ? L.slice(0, 60).map(x => <div class="li"><span class="muted">{dateShort(x.date)}</span><span>{x.text}</span></div>) : <div class="muted">Nothing yet.</div>}</Panel>
   </div>;
 }

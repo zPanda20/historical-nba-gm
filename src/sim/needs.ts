@@ -22,10 +22,37 @@ export function staffSd(w: World): number {
 export function unitErr(w: World, pid: string, k = 'ovr'): number {
   return stream(w.meta.seed, 'ourview', pid, k).normal(0, 1);
 }
-/** How our staff sees a rating: exact for our own players, otherwise biased by staff precision. */
+// ------------------------------------------------------------------ scouting specific players
+export const reportsOn = (w: World, p: Player) => ((w as any).scoutReports?.[p.id] ?? 0) + (p.scout?.now?.reports ?? 0);
+/** Our uncertainty about a player we don't coach: staff quality, how much we've scouted him, how much tape exists. */
+export function sdFor(w: World, p: Player): number {
+  if (p.team === w.meta.userTeam) return 0;
+  const tape = p.sampleMin > 1500 ? 0.8 : p.sampleMin > 400 ? 1 : 1.35;
+  return staffSd(w) * tape / Math.sqrt(1 + 0.6 * reportsOn(w, p));
+}
+/** How our staff sees a rating: exact for our own players, otherwise biased by our (shrinking) error. */
 export function seenRating(w: World, p: Player, k: keyof Player['r']): number {
   if (p.team === w.meta.userTeam) return p.r[k];
-  return p.r[k] + unitErr(w, p.id, k) * staffSd(w) * 1.3;
+  return p.r[k] + unitErr(w, p.id, k) * sdFor(w, p) * 1.3;
+}
+/** Scout trips: Lean 2, Standard 4, Aggressive 6 a week (or per offseason phase). */
+export function scoutTrips(w: World): { left: number; total: number } {
+  const S = w.season;
+  const key = S.phase === 'regular' || S.phase === 'playoffs' || S.phase === 'preseason' ? `w${Math.floor(new Date(S.day + 'T12:00:00Z').getTime() / (7 * 86400000))}` : `${S.phase}${S.year}`;
+  const c = ((w as any).scoutCredits ??= { week: key, used: 0 });
+  if (c.week !== key) { c.week = key; c.used = 0; }
+  const total = w.scoutBudget * 2;
+  return { left: Math.max(0, total - c.used), total };
+}
+export function useScoutTrip(w: World) { scoutTrips(w); (w as any).scoutCredits.used++; }
+/** File a report on any player outside our team. */
+export function scoutPlayer(w: World, p: Player): string {
+  const R = ((w as any).scoutReports ??= {}) as Record<string, number>;
+  R[p.id] = (R[p.id] ?? 0) + 1;
+  const keys: [keyof Player['r'], string][] = [['ins', 'inside scoring'], ['post', 'post moves'], ['mid', 'mid-range shooting'], ['ft', 'free throws'], ['pass', 'passing'], ['handle', 'ball handling'],
+    ['dreb', 'defensive rebounding'], ['oreb', 'offensive rebounding'], ['blk', 'shot blocking'], ['stl', 'steals'], ['perD', 'perimeter defense'], ['intD', 'interior defense'], ['ath', 'athleticism'], ['stamina', 'stamina'], ['iq', 'basketball IQ']];
+  const seen = keys.map(([k, l]) => ({ l, v: seenRating(w, p, k) })).sort((a, b) => b.v - a.v);
+  return `Best: ${seen.slice(0, 2).map(x => x.l).join(', ')}. Weakest: ${seen.slice(-2).map(x => x.l).join(', ')}.`;
 }
 
 export function needMetric(w: World, ids: string[], key: string): number {

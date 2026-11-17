@@ -1,15 +1,17 @@
 import { useState } from 'preact/hooks';
 import { useStore, closeModal, commit, toast, openModal, go, setUI, ui } from './store';
 import { Headshot, Logo, Btn, Chip, Meter, ht, f1, pct, seasonLabel, OvrBadge, injuryChip, seenOvr, CondBar } from './util';
-import { MessageView } from './screens/People';
+import { MessageView, peopleEra } from './screens/People';
 import { NeedImpact, ReqPanel } from './deal';
 import { jobMarket, approachTeam, ensureOffer, takeJob, jobBar, MAX_APPROACHES } from '../sim/jobs';
 import { BoxScore } from './screens/Games';
 import { CLOCKS } from './Chrome';
 import { CoachCard } from './screens/Staff';
 import { perGame } from '../sim/league';
-import { coachNeed, fireCoach, fmt$, marketSalary, playerAccepts, releasePlayer, requestCoach, setClock, signPlayer } from '../sim/gm';
+import { scoutReport, coachNeed, fireCoach, fmt$, marketSalary, playerAccepts, releasePlayer, requestCoach, setClock, signPlayer } from '../sim/gm';
 import { potentialOvr } from '../sim/world';
+import { seenRating, sdFor, reportsOn, scoutTrips, useScoutTrip, scoutPlayer } from '../sim/needs';
+import { roles } from './screens/Roster';
 import { hashStr } from '../sim/rng';
 import type { Player, World } from '../sim/types';
 
@@ -58,14 +60,19 @@ function PlayerModal({ w, id }: { w: World; id: string }) {
         <div class="pm-mood"><span>Stamina</span><b>{mine ? p.r.stamina : word(p.r.stamina)}</b></div>
       </div>
       <div class="pm-m">
-        {mine || !p.scout ? <div class="pm-ratings">{GROUPS.map(([g, ks]) => <div class="rg"><h4>{g}</h4>{ks.map(([k, l]) => {
-          const v = mine ? p.r[k] : Math.round(p.r[k] + ((hashStr(w.meta.seed + p.id + k) % 11) - 5));
-          return <div class="rr"><span>{l}</span>{mine ? <><div class="meter"><i style={{ width: `${(v - 20) / 0.75}%` }} /></div><b>{v}</b></> : <em>{word(v)}</em>}</div>; })}</div>)}</div>
-          : <div class="pm-ratings"><div class="rg"><h4>Scouting report</h4>
-            <div class="rr"><span>Ready now</span><b>{p.scout.now.lo}–{p.scout.now.hi}</b></div>
-            <div class="rr"><span>Ceiling</span><b>{p.scout.pot.lo}–{p.scout.pot.hi}</b></div>
-            <div class="rr"><span>Reports filed</span><b>{p.scout.now.reports}</b></div>
-            <p class="muted small">Our department's belief, built from {p.scout.now.reports} report{p.scout.now.reports === 1 ? '' : 's'}. No one knows how a prospect turns out.</p></div></div>}
+        {mine ? <div class="pm-ratings">{GROUPS.map(([g, ks]) => <div class="rg"><h4>{g}</h4>{ks.map(([k, l]) => {
+          const v = p.r[k];
+          return <div class="rr"><span>{l}</span><div class="meter"><i style={{ width: `${(v - 20) / 0.75}%` }} /></div><b>{v}</b></div>; })}</div>)}</div>
+          : <div class="pm-ratings">
+            {p.scout && !p.team && <div class="rg wide"><h4>Prospect read</h4>
+              <div class="rr"><span>Ready now</span><b class="nw">{p.scout.now.lo}–{p.scout.now.hi}</b></div>
+              <div class="rr"><span>Ceiling</span><b class="nw">{p.scout.pot.lo}–{p.scout.pot.hi}</b></div></div>}
+            {GROUPS.map(([g, ks]) => <div class="rg"><h4>{g}</h4>{ks.map(([k, l]) => {
+              const mid = seenRating(w, p, k), half = Math.max(2, sdFor(w, p) * 1.3);
+              const lo = Math.round(mid - half), hi = Math.round(mid + half);
+              const X = (v: number) => `${Math.max(0, Math.min(100, (v - 20) / 0.75))}%`;
+              return <div class="rr est"><span>{l}</span><div class="rband"><i style={{ left: X(lo), width: `calc(${X(hi)} - ${X(lo)})` }} /><b style={{ left: X(mid) }} /></div><em>{word(mid)}</em><small>{lo}–{hi}</small></div>; })}</div>)}
+          </div>}
         {mine && (p.age ?? 30) <= 25 && <div class="muted small">Staff ceiling estimate: {Math.max(p.ovr, potentialOvr(p) - 4)}–{potentialOvr(p) + 4}</div>}
         <table class="tbl compact"><thead><tr><th class="l">Season</th><th class="l">Tm</th><th>G</th><th>MIN</th><th>PTS</th><th>REB</th><th>AST</th><th>STL</th><th>BLK</th><th>FG%</th><th>FT%</th></tr></thead>
           <tbody>{seasons.flatMap(y => [false, true].map(po => { const s = perGame(p, y, po); if (!s.g) return null;
@@ -81,8 +88,10 @@ function PlayerModal({ w, id }: { w: World; id: string }) {
         <div class="traits">{Object.entries(p.traits).map(([k, v]) => <div><span>{k}</span><em>{word(v)}</em></div>)}</div>
         <div class="muted small">{p.traitsNote}</div>
         <div class="pm-act">
+          {!mine && !p.retired && <ScoutBox w={w} p={p} />}
           {mine && <>
             <h4>Ask the coach</h4>
+            <div class="pm-role"><span>Coach's role</span><b>{roles(w)[p.id]?.role ?? '—'}</b>{(roles(w)[p.id]?.min ?? 0) >= 4 && <small>~{Math.round(roles(w)[p.id].min)} min a night</small>}{w.teams[u].minutesRequests?.[p.id] && <small>Your last ask: {w.teams[u].minutesRequests![p.id].kind} · {w.teams[u].minutesRequests![p.id].status}</small>}</div>
             <Btn kind="sm" auto onClick={() => ask('more')}>More minutes</Btn>
             <Btn kind="sm" onClick={() => ask('protect')}>Manage his load</Btn>
             <Btn kind="sm" onClick={() => ask('develop')}>Development focus</Btn>
@@ -98,6 +107,26 @@ function PlayerModal({ w, id }: { w: World; id: string }) {
       </div>
     </div>
   </Shell>;
+}
+
+function ScoutBox({ w, p }: { w: World; p: Player }) {
+  const [rep, setRep] = useState<string | null>(null);
+  const trips = scoutTrips(w);
+  const n = reportsOn(w, p);
+  const sd = sdFor(w, p);
+  const q = sd <= 2.2 ? 'Sharp' : sd <= 3.4 ? 'Solid' : sd <= 5 ? 'Rough' : 'Shaky';
+  return <div class="scoutbox">
+    <h4>Our read on him</h4>
+    <div class="sb2"><span>Reports filed</span><b>{n}</b></div>
+    <div class="sb2"><span>Precision</span><b>{q}</b></div>
+    <Btn kind="sm" auto disabled={trips.left <= 0} onClick={() => {
+      useScoutTrip(w);
+      const txt = p.scout && !p.team ? (scoutReport(w, p.id), 'Prospect report filed. Ranges updated.') : scoutPlayer(w, p);
+      setRep(txt); commit();
+    }}>Send a scout ({trips.left} of {trips.total} trips left)</Btn>
+    {rep && <div class="reply">{rep}</div>}
+    <div class="muted small">Each report narrows the ranges. A bigger scouting budget means more trips and sharper eyes.</div>
+  </div>;
 }
 
 function OfferModal({ w, pid, msgId }: { w: World; pid: string; msgId?: string }) {
@@ -201,7 +230,7 @@ export function Modals() {
   const m = u.modal!;
   if (!w) return null;
   switch (m.kind) {
-    case 'message': { const msg = w.messages.find(x => x.id === m.arg.id); return msg ? <Shell title="On your desk"><MessageView w={w} m={msg} inModal /></Shell> : null; }
+    case 'message': { const msg = w.messages.find(x => x.id === m.arg.id); return msg ? <Shell title="On your desk"><MessageView w={w} m={msg} inModal era={peopleEra(w)} /></Shell> : null; }
     case 'player': return w.players[m.arg.id] ? <PlayerModal w={w} id={m.arg.id} key={m.arg.id} /> : null;
     case 'box': { const g = w.season.games.find(x => x.id === m.arg.id); return g?.box ? <Shell wide title="Box score"><BoxScore w={w} g={g} /></Shell> : null; }
     case 'offer': return <OfferModal w={w} pid={m.arg.pid} msgId={m.arg.msgId} />;

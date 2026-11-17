@@ -21,7 +21,7 @@ export function applyResult(world: World, g: GameRec, res: GameResult, keepLog: 
   g.hs = res.hs; g.as = res.as; g.ot = res.ot; g.played = true;
   const user = world.meta.userTeam;
   g.box = res.box;
-  if (keepLog && (g.home === user || g.away === user)) g.log = res.log;
+  if (keepLog && (g.home === user || g.away === user || g.playoff)) g.log = res.log;
   const isPO = !!g.playoff;
   for (const [side, tid] of [['home', g.home], ['away', g.away]] as const) {
     for (const l of res.box[side]) {
@@ -56,7 +56,7 @@ export function applyResult(world: World, g: GameRec, res: GameResult, keepLog: 
 }
 
 export function playGame(world: World, g: GameRec, keepLog = true): GameResult {
-  const res = simulateGame(world, g.id, g.home, g.away, { log: keepLog && (g.home === world.meta.userTeam || g.away === world.meta.userTeam), playoff: !!g.playoff });
+  const res = simulateGame(world, g.id, g.home, g.away, { log: keepLog && (g.home === world.meta.userTeam || g.away === world.meta.userTeam || !!g.playoff), playoff: !!g.playoff });
   applyResult(world, g, res, keepLog);
   return res;
 }

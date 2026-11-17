@@ -3,6 +3,8 @@ import type { ComponentChildren } from 'preact';
 import type { Player, Team, World } from '../sim/types';
 import { perGame } from '../sim/league';
 import { hashStr } from '../sim/rng';
+import { believedOvr } from '../sim/trade';
+import { sdFor } from '../sim/needs';
 import { ui, setUI } from './store';
 
 export const logoUrl = (t: Team | string) => `assets/logos/${typeof t === 'string' ? t : t.abbr}.png`;
@@ -53,10 +55,10 @@ export function Meter({ v, max = 100, label }: { v: number; max?: number; label?
 /** Rating value as the front office sees it: own players exactly (coach sees them daily), others as a scouting range. */
 export function seenOvr(w: World, p: Player): { mid: number; lo: number; hi: number; exact: boolean } {
   if (p.team === w.meta.userTeam) return { mid: p.ovr, lo: p.ovr, hi: p.ovr, exact: true };
-  if (p.scout?.now) return { ...p.scout.now, exact: false };
-  const n = ((hashStr(w.meta.seed + p.id) % 9) - 4) * 0.8;
-  const mid = Math.round(p.ovr + n);
-  return { mid, lo: mid - 3, hi: mid + 3, exact: false };
+  if (p.scout?.now && !p.team) return { ...p.scout.now, exact: false };
+  const mid = Math.round(believedOvr(w, p, w.meta.userTeam));
+  const half = Math.max(2, Math.round(sdFor(w, p) * 1.3));
+  return { mid, lo: mid - half, hi: mid + half, exact: false };
 }
 export function OvrBadge({ w, p }: { w: World; p: Player }) {
   const s = seenOvr(w, p);

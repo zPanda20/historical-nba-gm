@@ -2,6 +2,7 @@ import { useStore, openModal, commit, toast } from '../store';
 import { Panel, Btn, Logo, ht, Chip, PlayerTile } from '../util';
 import { draftToMyPick, draftPlayer, autoDraftRest } from '../actions';
 import { scoutReport } from '../../sim/gm';
+import { scoutTrips, useScoutTrip } from '../../sim/needs';
 import type { Player, World } from '../../sim/types';
 
 const weekKey = (d: string) => { const t = new Date(d + 'T12:00:00Z'); return Math.floor(t.getTime() / (7 * 86400000)); };
@@ -33,13 +34,13 @@ export function Draft() {
   if (S.phase !== 'draft' || !S.draft) {
     const year = S.year + 1;
     const cls = (w!.draftClasses[String(year)] ?? []).map(id => w!.players[id]).filter(p => p && !p.team && p.scout).sort((a, b) => b.scout!.pot.mid - a.scout!.pot.mid);
-    const left = credits(w!);
+    const left = scoutTrips(w!).left;
     const picks = w!.teams[u].picks.filter(p => p.season === year).sort((a, b) => a.round - b.round);
     return <div class="screen">
       <div class="screen-h"><h2>Draft & Scouting</h2><div class="screen-meta">{year} class · Our picks: {picks.map(p => `R${p.round}${p.original !== u ? ` (${p.original})` : ''}`).join(', ') || 'none'} · Scout trips left this week: {left}</div></div>
       <Panel class="fill" title={`${year} draft board · ${cls.length} prospects`} right={<span class="muted">Ranges are our department's beliefs — not the truth. More reports narrow them.</span>}>
         <table class="tbl rows"><thead><tr><th class="l" colSpan={2}>Prospect</th><th>Pos</th><th>Age</th><th>Ht</th><th>Now</th><th>Ceiling</th><th>Rpts</th><th></th></tr></thead>
-          <tbody>{cls.slice(0, 120).map(p => <ProspectRow w={w!} p={p} action={<Btn kind="sm ghost" disabled={left <= 0} onClick={() => { (w as any).scoutCredits.used++; scoutReport(w!, p.id); commit(); toast(`Report filed on ${p.name}.`); }}>Send a scout</Btn>} />)}</tbody></table>
+          <tbody>{cls.slice(0, 120).map(p => <ProspectRow w={w!} p={p} action={<Btn kind="sm ghost" disabled={left <= 0} onClick={() => { useScoutTrip(w!); scoutReport(w!, p.id); commit(); toast(`Report filed on ${p.name}.`); }}>Send a scout</Btn>} />)}</tbody></table>
       </Panel>
     </div>;
   }

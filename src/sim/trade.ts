@@ -5,7 +5,7 @@ import { clamp, sigmoid, stream } from './rng';
 import { playerValue } from './coach';
 import { potentialOvr, projectedWins, addEvent, addNews, addMessage } from './world';
 import { clockWeights, marketSalary, payroll, fmt$, TRADE_DEADLINE } from './gm';
-import { staffSd, unitErr } from './needs';
+import { staffSd, unitErr, sdFor } from './needs';
 
 export interface PickRef { season: number; round: number; original: string }
 export interface TradeOffer { other: string; give: string[]; get: string[]; givePicks: PickRef[]; getPicks: PickRef[]; }
@@ -48,7 +48,7 @@ const SLOTS: Record<string, number> = { G: 3.5, W: 2, B: 3.5 };
 /** A team's belief about a player's current value. Own players: exact. Others: team-specific, persistent error. */
 export function believedOvr(w: World, p: Player, viewer: string): number {
   if (p.team === viewer) return playerValue(p);
-  if (viewer === w.meta.userTeam) return playerValue(p) + unitErr(w, p.id) * staffSd(w);
+  if (viewer === w.meta.userTeam) return playerValue(p) + unitErr(w, p.id) * sdFor(w, p);
   const sd = p.sampleMin > 1500 ? 2.8 : p.sampleMin > 400 ? 4 : 6;
   return playerValue(p) + stream(w.meta.seed, 'belief', viewer, p.id).normal(0, sd);
 }
@@ -190,11 +190,11 @@ export function evaluateTrade(w: World, offer: TradeOffer): TradeReply {
 /** Our staff's read of a deal: point estimate, uncertainty band, and a guess at the other side's appetite. */
 export function staffRead(w: World, offer: TradeOffer) {
   const u = w.meta.userTeam;
-  const sd = staffSd(w);
+  const sd = offer.get.length ? offer.get.reduce((a, id) => a + sdFor(w, w.players[id]), 0) / offer.get.length : staffSd(w);
   const calc = (shift: number) => {
     const U = w.teams[u];
     const after = [...U.roster.filter(id => !offer.give.includes(id)), ...offer.get];
-    const inV = offer.get.map(id => { const p = w.players[id]; return assetValue(w, p, u, believedOvr(w, p, u) + shift * sd) * needMult(w, u, after, p); });
+    const inV = offer.get.map(id => { const p = w.players[id]; return assetValue(w, p, u, believedOvr(w, p, u) + shift * sdFor(w, p)) * needMult(w, u, after, p); });
     const outV = offer.give.map(id => assetValue(w, w.players[id], u));
     let g = packageSum(inV) + offer.getPicks.reduce((s, p) => s + pickValue(w, p, u), 0) * (1 + shift * sd / 25);
     const o = packageSum(outV) + offer.givePicks.reduce((s, p) => s + pickValue(w, p, u), 0);

@@ -19,17 +19,25 @@ import { Settings } from './Settings';
 
 const W = 1600, H = 900;
 
-function useScale() {
-  const [s, setS] = useState(1);
+/** Fit the 1600×900 stage to the window: as large as possible, centred both ways. */
+function useFit() {
+  const calc = () => {
+    const vw = document.documentElement.clientWidth || window.innerWidth, vh = document.documentElement.clientHeight || window.innerHeight;
+    const s = Math.min(vw / W, vh / H);
+    return { s, x: Math.max(0, (vw - W * s) / 2), y: Math.max(0, (vh - H * s) / 2) };
+  };
+  const [f, setF] = useState(calc);
   useLayoutEffect(() => {
-    const f = () => setS(Math.min(window.innerWidth / W, window.innerHeight / H));
-    f(); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f);
+    const on = () => setF(calc());
+    on(); window.addEventListener('resize', on); document.addEventListener('fullscreenchange', on);
+    return () => { window.removeEventListener('resize', on); document.removeEventListener('fullscreenchange', on); };
   }, []);
-  return s;
+  return f;
 }
 
 function onKey(e: KeyboardEvent) {
   const typing = isTyping();
+  if (ui.busy) { e.preventDefault(); if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') ui.stopRequested = true; return; }
   if (e.key === 'Escape') {
     e.preventDefault();
     if (typing) { (document.activeElement as HTMLElement).blur(); return; }
@@ -41,7 +49,6 @@ function onKey(e: KeyboardEvent) {
     return;
   }
   if (typing) return;
-  if (ui.busy) { e.preventDefault(); return; }
   const dirs: Record<string, 'up' | 'down' | 'left' | 'right'> = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
   if (dirs[e.key]) { e.preventDefault(); moveSelection(dirs[e.key]); return; }
   if (e.key === 'Enter') {
@@ -68,7 +75,7 @@ function onKey(e: KeyboardEvent) {
 
 export function App() {
   const { world, ui: u } = useStore();
-  const scale = useScale();
+  const fit = useFit();
   useEffect(() => {
     installHoverFocus();
     document.addEventListener('fullscreenchange', () => setUI({}));
@@ -90,7 +97,7 @@ export function App() {
 
   const team = world && u.mode === 'game' ? world.teams[world.meta.userTeam] : null;
   const th = teamTheme(team);
-  const style: any = { width: W, height: H, transform: `scale(${scale})`, ...th.vars };
+  const style: any = { width: W, height: H, left: fit.x, top: fit.y, transform: `scale(${fit.s})`, ...th.vars };
 
   return <div class="viewport">
     <div class="stage" style={style}>
@@ -117,11 +124,11 @@ export function App() {
         {u.settings && <Settings />}
         {u.modal && <Modals />}
       </>}
-      {u.busy && <div class="busy" data-scope><div class="busy-card"><div class="bulbs-sm">● ● ●</div><div class="busy-t">{u.busy}…</div>{world && <div class="busy-d">{world.season.day}</div>}</div></div>}
+      {u.busy && <div class="busy" data-scope><div class="busy-card"><div class="bulbs-sm">● ● ●</div><div class="busy-t">{u.busy}…</div>{world && <div class="busy-d">{world.season.day}</div>}{u.busy.startsWith('Autopilot') && <><div class="busy-s">{world?.teams[world.meta.userTeam].w}–{world?.teams[world.meta.userTeam].l} · {world?.season.phase}</div><button class="btn big" onPointerDown={() => { ui.stopRequested = true; }} onClick={() => { ui.stopRequested = true; }}>Stop</button></>}</div></div>}
       {u.toast && <div class="toast" key={u.toast.id}>{u.toast.text}</div>}
     </div>
   </div>;
 }
 export { getWorld };
 // console access for testing and tinkering
-(window as any).hnba = { getWorld, commit: () => setUI({}) };
+(window as any).hnba = { getWorld, ui, commit: () => setUI({}) };

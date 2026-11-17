@@ -28,6 +28,8 @@ export interface UIState {
   gamecast: string | null; // game id being watched
   castSpeed: number;
   tradeDraft: { other: string; give: string[]; get: string[]; givePicks: any[]; getPicks: any[] } | null;
+  stopRequested?: boolean;
+  peopleEra?: string;
 }
 
 let world: World | null = null;

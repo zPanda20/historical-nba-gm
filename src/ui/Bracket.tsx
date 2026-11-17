@@ -2,7 +2,7 @@
 import type { Series, World } from '../sim/types';
 import { standings } from '../sim/league';
 import { Logo, place, seasonLabel } from './util';
-import { openModal } from './store';
+import { openModal, setUI } from './store';
 
 function seedsOf(w: World, conf: string): string[] {
   const s = (w.season as any)[`seeds${conf}`] as string[] | undefined;
@@ -25,7 +25,8 @@ function Box({ w, s, seeds, label, proj }: { w: World; s?: Series; seeds: Record
   if (!s) return <div class="bk-box">{label && <div class="bk-lab">{label}</div>}<Slot w={w} tid={proj?.[0]} seed={proj ? seeds[proj[0]] : undefined} /><Slot w={w} tid={proj?.[1]} seed={proj ? seeds[proj[1]] : undefined} /></div>;
   const live = !s.winner;
   const last = s.games.length ? s.games[s.games.length - 1] : null;
-  return <button data-nav class={`bk-box ${live ? 'live' : ''}`} onClick={() => last && openModal('box', { id: last })}>
+  const lg = last ? w.season.games.find(g => g.id === last) : null;
+  return <button data-nav class={`bk-box ${live ? 'live' : ''}`} title={lg?.log ? 'Replay the last game' : 'Box score'} onClick={() => lg && (lg.log ? setUI({ gamecast: lg.id }) : openModal('box', { id: lg.id }))}>
     <div class="bk-lab">{label ?? ''}{label ? ' · ' : ''}best of {s.bestOf}</div>
     <Slot w={w} tid={s.hi} seed={seeds[s.hi]} wins={s.wHi} won={s.winner === s.hi} lost={!!s.winner && s.winner !== s.hi} live={live} />
     <Slot w={w} tid={s.lo} seed={seeds[s.lo]} wins={s.wLo} won={s.winner === s.lo} lost={!!s.winner && s.winner !== s.lo} live={live} />

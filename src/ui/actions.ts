@@ -2,6 +2,7 @@
 import type { GameRec, Message, World } from '../sim/types';
 import { createWorld, addMessage, addEvent } from '../sim/world';
 import { advanceDay, addDays, runDraftUntilUser, makePick, startNextSeason, projectedWinsCache, nextUnplayedDate } from '../sim/league';
+import { runDelegates, delegated, offseasonRoster } from '../sim/delegate';
 import { aiFreeAgency, executeTrade, evaluateTrade, requestCoach, releasePlayer, TRADE_DEADLINE } from '../sim/gm';
 import { projectedWins } from '../sim/world';
 import { commit, getWorld, go, openModal, runBusy, setUI, setWorld, toast, ui } from './store';
@@ -36,6 +37,9 @@ export function lastUserGame(w: World): GameRec | undefined {
   const gs = w.season.games.filter(g => g.played && (g.home === w.meta.userTeam || g.away === w.meta.userTeam));
   return gs[gs.length - 1];
 }
+/** One calendar day, then the staff does whatever has been delegated to them. */
+export function dayStep(w: World) { advanceDay(w); runDelegates(w); }
+
 /** Keep the desk clean: FYI notes expire, stale decisions close, phase-bound items close with their phase. */
 export function tidyMessages(w: World) {
   const day = w.season.day;
@@ -68,7 +72,7 @@ export function sim(kind: 'day' | 'game' | 'week' | 'month' | 'regular' | 'round
   let steps = 0;
   runBusy(label, () => {
     if (S.phase !== 'preseason' && S.phase !== 'regular' && S.phase !== 'playoffs') return false;
-    advanceDay(w); steps++;
+    dayStep(w); steps++;
     if (S.phase !== startPhase && startPhase !== 'preseason') return false;
     if (startPhase === 'preseason' && kind !== 'regular') return false;
     if (kind === 'regular' && S.phase !== 'regular') return false;
@@ -99,13 +103,13 @@ export function resultLine(w: World, g: GameRec) {
 export function watchNext() {
   const w = getWorld();
   const S = w.season;
-  if (S.phase === 'preseason') advanceDay(w);
+  if (S.phase === 'preseason') dayStep(w);
   const g = S.phase === 'playoffs' ? null : nextUserGame(w);
   if (S.phase === 'playoffs') {
     const before = S.games.length;
     const u0 = urgentCount(w);
     runBusy('Getting to the arena', () => {
-      advanceDay(w);
+      dayStep(w);
       const mine = S.games.slice(before).find(x => x.home === user() || x.away === user());
       if (mine || S.phase !== 'playoffs' || urgentCount(w) > u0) return false;
       return true;
@@ -118,7 +122,7 @@ export function watchNext() {
   if (!g) { toast('No game left to watch.'); return; }
   const u0 = urgentCount(w);
   runBusy('Getting to the arena', () => {
-    advanceDay(w);
+    dayStep(w);
     if (g.played) return false;
     if (urgentCount(w) > u0) return false;
     return S.phase === 'regular';
@@ -133,7 +137,7 @@ export function watchNext() {
 export function draftToMyPick() {
   const w = getWorld();
   if (!w.season.draft) return;
-  const r = runDraftUntilUser(w, false);
+  const r = runDraftUntilUser(w, delegated(w, 'draft'));
   tidyMessages(w);
   commit();
   if (r === 'done') toast('The draft is complete. Free agency is open.');
@@ -166,6 +170,15 @@ export function seasonStartProblems(w: World): string[] {
   if (active.length > 12) out.push(`Roster has ${active.length} players under contract — cut to 12.`);
   if (active.length < 8) out.push(`Only ${active.length} players under contract — sign at least ${8 - active.length} more.`);
   return out;
+}
+export function beginNextSeasonSync(w: World) {
+  const t = w.teams[w.meta.userTeam];
+  for (const id of [...t.roster]) {
+    const p = w.players[id];
+    if ((p.contract?.years ?? 0) <= 0) { releasePlayer(w, id); p.rosterStatus = `Free agent (was ${t.abbr})`; }
+  }
+  for (const m of w.messages) if (!m.resolved) m.resolved = true;
+  aiFreeAgency(w); startNextSeason(w); runDelegates(w);
 }
 export function beginNextSeason() {
   const w = getWorld();
@@ -258,7 +271,42 @@ export function nextStop(w: World): { label: string; verb: string; run?: () => v
     const alive = S.playoffs!.series.some(s => (s.hi === u || s.lo === u) && !s.winner) || (S.playoffs!.round === 1 && ['East', 'West'].some(c => ((S as any)[`seeds${c}`] as string[]).slice(0, 2).includes(u)));
     return alive ? { label: 'Playoffs · next day', verb: 'Advance', run: () => sim('day') } : { label: 'Rest of the playoffs', verb: 'Advance', run: () => sim('playoffs') };
   }
-  if (S.phase === 'draft') return { label: `${S.year + 1} NBA Draft`, verb: 'Draft room', run: () => go('draft') };
+  if (S.phase === 'draft') return delegated(w, 'draft') ? { label: 'Scouts make our picks', verb: 'Run draft', run: () => autoDraftRest() } : { label: `${S.year + 1} NBA Draft`, verb: 'Draft room', run: () => go('draft') };
+  if (delegated(w, 'offseason')) return { label: 'Staff handles the offseason', verb: 'Advance', run: () => runBusy('Your staff works the offseason', () => { runDelegates(w); offseasonRoster(w); beginNextSeasonSync(w); return false; }, () => { go('home'); toast(`Welcome to the ${w.season.year}–${String(w.season.year + 1).slice(2)} season.`); }) };
   const probs = seasonStartProblems(w);
   return probs.length ? { label: probs[0], verb: 'Fix roster', run: () => go('office', 'contracts') } : { label: `Open ${S.year + 1}–${String(S.year + 2).slice(2)}`, verb: 'Advance', run: () => beginNextSeason() };
+}
+
+/** Playoffs: go to another series' next game (the whole day is played; we sit in that arena). */
+export function attendSeries(seriesId: string) {
+  const w = getWorld();
+  const S = w.season;
+  const before = S.games.length;
+  runBusy('Heading to the arena', () => { dayStep(w); return false; }, () => {
+    tidyMessages(w);
+    const g = S.games.slice(before).find(x => x.playoff?.series === seriesId);
+    if (g) setUI({ gamecast: g.id }); else toast('That series had no game today.');
+  });
+}
+
+/** Autopilot: the staff runs everything, day after day and season after season, until you stop it
+ * or something lands that nobody was given the authority to handle. */
+export function autopilot() {
+  const w = getWorld();
+  const S = () => w.season;
+  ui.stopRequested = false;
+  let seasons = 0;
+  runBusy('Autopilot — press Stop to take the wheel', () => {
+    if (ui.stopRequested || w.meta.fired) return false;
+    const ph = S().phase;
+    if (ph === 'preseason' || ph === 'regular' || ph === 'playoffs') {
+      const u0 = urgentCount(w);
+      dayStep(w);
+      if (urgentCount(w) > u0) { runDelegates(w); if (urgentCount(w) > u0 && !(S().phase === 'draft' && delegated(w, 'draft'))) return false; }
+      return true;
+    }
+    if (ph === 'draft') { if (!delegated(w, 'draft')) return false; runDraftUntilUser(w, true); runDelegates(w); return true; }
+    if (ph === 'freeagency') { if (!delegated(w, 'offseason')) return false; runDelegates(w); offseasonRoster(w); beginNextSeasonSync(w); seasons++; return true; }
+    return false;
+  }, () => { tidyMessages(w); toast(ui.stopRequested ? 'You have the wheel.' : w.meta.fired ? 'Autopilot stopped: you have been fired.' : 'Autopilot paused: something needs you.'); ui.stopRequested = false; void seasons; });
 }
