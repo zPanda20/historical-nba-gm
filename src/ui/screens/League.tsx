@@ -1,5 +1,6 @@
 import { useStore, openModal } from '../store';
-import { place, Panel, Tabs, curTab, Logo, f1, pct, dateShort, seasonLabel } from '../util';
+import { Bracket } from '../Bracket';
+import { PlayerTile, place, Panel, Tabs, curTab, Logo, f1, pct, dateShort, seasonLabel } from '../util';
 import { standings, perGame } from '../../sim/league';
 import type { Series, World } from '../../sim/types';
 
@@ -24,30 +25,13 @@ function Leaders({ w }: { w: World }) {
   const rows = Object.values(w.players).filter(p => (p.stats ?? []).some(s => s.season === y && !s.playoffs)).map(p => ({ p, s: perGame(p, y, false) })).filter(o => o.s.g >= Math.max(1, Math.floor(maxG * 0.5)));
   const cats: [string, (s: any) => number, (v: number) => string][] = [['Points', s => s.ppg, f1], ['Rebounds', s => s.rpg, f1], ['Assists', s => s.apg, f1], ['Steals', s => s.spg, f1], ['Blocks', s => s.bpg, f1], ['FG%', s => s.fga >= 200 ? s.fgp : 0, pct]];
   return <div class="leaders">{cats.map(([n, f, fm]) => <Panel title={n}>
-    {[...rows].sort((a, b) => f(b.s) - f(a.s)).slice(0, 8).map((o, i) => <button data-nav class={`ld ${o.p.team === w.meta.userTeam ? 'me' : ''}`} onClick={() => openModal('player', { id: o.p.id })}>
-      <span class="ld-r">{i + 1}</span><span class="ld-n">{o.p.name}</span><span class="ld-t">{w.teams[o.s.team]?.abbr}</span><b>{fm(f(o.s))}</b></button>)}
+    {[...rows].sort((a, b) => f(b.s) - f(a.s)).slice(0, 8).map((o, i) => <div class={`ld ${o.p.team === w.meta.userTeam ? 'me' : ''}`}>
+      <span class="ld-r">{i + 1}</span><PlayerTile p={o.p} size={30} sub={w.teams[o.s.team] ? place(w.teams[o.s.team]) : ''} right={<b class="ld-v">{fm(f(o.s))}</b>} /></div>)}
   </Panel>)}</div>;
 }
 
-function SeriesBox({ w, s }: { w: World; s: Series }) {
-  const H = w.teams[s.hi], L = w.teams[s.lo];
-  return <div class={`series ${s.hi === w.meta.userTeam || s.lo === w.meta.userTeam ? 'me' : ''}`}>
-    <div class={s.winner === s.hi ? 'won' : ''}><Logo t={H} size={22} />{place(H)}<b>{s.wHi}</b></div>
-    <div class={s.winner === s.lo ? 'won' : ''}><Logo t={L} size={22} />{place(L)}<b>{s.wLo}</b></div>
-  </div>;
-}
-
 function Playoffs({ w }: { w: World }) {
-  const P = w.season.playoffs;
-  if (!P) return <Panel title="Playoff format (1976–77)"><p class="muted">Twelve teams: six per conference. Division winners get first-round byes. The first round is best-of-three; every later round is best-of-seven.</p>
-    <div class="two">{['East', 'West'].map(c => <div><h4>{c} — if the season ended today</h4>{standings(w, c).slice(0, 6).map((t, i) => <div class="li"><span>{i + 1}</span><Logo t={t} size={20} /><span>{place(t)}</span><b>{t.w}–{t.l}</b></div>)}</div>)}</div></Panel>;
-  const rounds = ['First round', 'Conference semifinals', 'Conference finals', 'NBA Finals'];
-  return <div class="bracket">{[1, 2, 3, 4].map(r => <Panel title={rounds[r - 1]}>
-    {P.series.filter(s => s.round === r).map(s => <SeriesBox w={w} s={s} />)}
-    {!P.series.some(s => s.round === r) && <div class="muted">TBD</div>}
-  </Panel>)}
-    {w.season.champion && <div class="champ"><Logo t={w.teams[w.season.champion]} size={90} /><div>{seasonLabel(w.season.year)} Champions<b>{w.teams[w.season.champion].city} {w.teams[w.season.champion].name}</b></div></div>}
-  </div>;
+  return <Panel class="fill"><Bracket w={w} /></Panel>;
 }
 
 function News({ w }: { w: World }) {

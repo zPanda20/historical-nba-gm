@@ -4,7 +4,7 @@ import { installHoverFocus, isTyping, moveSelection, focusFirst } from './nav';
 import { teamTheme } from './theme';
 import { openMostUrgent } from './actions';
 import { Title, NewGame } from './Title';
-import { TopBar, NavRail, DeviceSlot } from './Chrome';
+import { TopBar, NavRail, DeviceSlot, toggleFullscreen } from './Chrome';
 import { Home } from './screens/Home';
 import { Rafters } from './screens/Rafters';
 import { Roster } from './screens/Roster';
@@ -50,6 +50,7 @@ function onKey(e: KeyboardEvent) {
     else if (!el || el === document.body) { e.preventDefault(); focusFirst(); }
     return;
   }
+  if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey) { e.preventDefault(); toggleFullscreen(); return; }
   if (ui.mode !== 'game') return;
   if (e.key === 'Tab') { e.preventDefault(); if (!ui.gamecast) openMostUrgent(); return; }
   if (e.key === ' ') {
@@ -70,6 +71,7 @@ export function App() {
   const scale = useScale();
   useEffect(() => {
     installHoverFocus();
+    document.addEventListener('fullscreenchange', () => setUI({}));
     window.addEventListener('keydown', onKey);
     const stopSpace = (e: KeyboardEvent) => { if (e.key === ' ' && !isTyping()) e.preventDefault(); };
     window.addEventListener('keyup', stopSpace);
@@ -120,3 +122,5 @@ export function App() {
   </div>;
 }
 export { getWorld };
+// console access for testing and tinkering
+(window as any).hnba = { getWorld, commit: () => setUI({}) };

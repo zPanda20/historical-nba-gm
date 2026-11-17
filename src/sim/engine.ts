@@ -17,7 +17,7 @@ export const CAL = {
   secHalf: 14.1, secTrans: 6.0, transRate: 0.2,
   ft: 0.752,
   spread: 0.47, // compresses percentile-based ratings (uniform 30-92) toward a realistic talent spread
-  fatOn: 0.027, fatOff: 0.07,
+  fatOn: 0.036, fatOff: 0.075,
   injuryPerMin: 0.00022,
 };
 
@@ -65,7 +65,7 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
     const coach = world.coaches[team.coach];
     const plan = makeGameplan(world, team, coach);
     const avail = team.roster.map(id => world.players[id]).filter(p => p && !(p.injury && p.injury.daysLeft > 0));
-    const ps: PState[] = avail.map((p, i) => ({ p, slot: i, sec: 0, F: 0.05 + (p.fatigueSeason ?? 0) * 0.1, fouls: 0, out: false, injured: false,
+    const ps: PState[] = avail.map((p, i) => ({ p, slot: i, sec: 0, F: 0.04 + (100 - (p.cond ?? 100)) / 100 * 0.55 + (p.fatigueSeason ?? 0) * 0.08, fouls: 0, out: false, injured: false,
       line: { pid: p.id, name: p.name, min: 0, pts: 0, fgm: 0, fga: 0, tpm: 0, tpa: 0, ftm: 0, fta: 0, oreb: 0, dreb: 0, ast: 0, stl: 0, blk: 0, tov: 0, pf: 0, pm: 0, gs: false } }));
     const on = plan.starters.map(id => ps.find(x => x.p.id === id)!).filter(Boolean);
     for (const x of ps) if (on.length < 5 && !on.includes(x)) on.push(x);
@@ -139,8 +139,9 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
         const expected = tgt * 60 * (el / (4 * rules.qMin * 60));
         let sc = side.plan.priority[x.p.id] ?? 0;
         sc += playerValue(x.p) / 12;
-        sc -= 12 * Math.max(0, x.F - 0.2);
-        if (!late && !garbage) sc -= Math.max(0, x.sec - expected) / 60 * 0.9 - Math.max(0, expected - x.sec) / 60 * 0.25;
+        sc -= 13 * Math.max(0, x.F - 0.22);
+        if (!late && !garbage) sc -= Math.max(0, x.sec - expected) / 60 * 1.5 - Math.max(0, expected - x.sec) / 60 * 0.35;
+        if (late && !garbage) sc -= Math.max(0, x.sec - expected - 240) / 60 * 0.6;
         if (tgt === 0 && !garbage) sc -= 6;
         const trouble = x.fouls >= (q <= 4 ? (q === 4 && clock < 360 ? 6 : q + 1) : 6);
         if (trouble && !late) sc -= 5;

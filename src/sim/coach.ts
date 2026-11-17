@@ -64,13 +64,15 @@ export function makeGameplan(world: World, team: Team, coach: Coach): Gameplan {
     starters.push(p);
   }
   for (const p of sorted) if (starters.length < 5 && !starters.includes(p)) starters.push(p);
-  const depth = Math.round(8 + (coach.depth - 50) / 25); // 7..10 man rotation
+  const depth = clamp(Math.round(9 + (coach.depth - 50) / 22), 8, 11); // 8..11 man rotation
   const targetMin: Record<string, number> = {};
   const priority: Record<string, number> = {};
   const benchOrder = sorted.filter(p => !starters.includes(p));
-  const benchMins = [25, 22, 17, 12, 7, 3, 0, 0];
-  starters.forEach((p, i) => { targetMin[p.id] = clamp(30 + (val[p.id] - val[starters[4].id]) * 0.35 + (p.r.stamina - 60) / 12, 25, 36); priority[p.id] = 10 - i * 0.2; });
+  const benchMins = [24, 21, 17, 13, 9, 6, 3, 0];
+  starters.forEach((p, i) => { targetMin[p.id] = clamp(30 + (val[p.id] - val[starters[4].id]) * 0.35 + (p.r.stamina - 60) / 12, 24, 35); priority[p.id] = 10 - i * 0.2; });
   benchOrder.forEach((p, i) => { targetMin[p.id] = i < depth - 5 ? benchMins[i] : 0; priority[p.id] = 6 - i; });
+  // tired legs: the coach trims planned minutes for players short on condition (back-to-backs, heavy loads)
+  for (const p of roster) if (targetMin[p.id]) targetMin[p.id] *= clamp(0.62 + 0.38 * ((p.cond ?? 100) / 100) + (p.r.stamina - 60) / 400, 0.55, 1.08);
   // normalise to 240 minutes
   const total = Object.values(targetMin).reduce((a, b) => a + b, 0);
   for (const k in targetMin) targetMin[k] = targetMin[k] * 240 / total;

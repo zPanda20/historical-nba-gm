@@ -33,6 +33,8 @@ export function applyResult(world: World, g: GameRec, res: GameResult, keepLog: 
       s.oreb += l.oreb; s.dreb += l.dreb; s.ast += l.ast; s.stl += l.stl; s.blk += l.blk; s.tov += l.tov; s.pf += l.pf;
       // season-long fatigue (load) proxy
       p.fatigueSeason = clamp((p.fatigueSeason ?? 0) * 0.92 + (l.min / 48) * 0.08, 0, 1);
+      // game-to-game condition: heavy minutes on low stamina leave legs heavy for the next night
+      p.cond = clamp((p.cond ?? 100) - l.min * 0.62 * (1.45 - p.r.stamina / 100) * (1 + Math.max(0, (p.age ?? 27) - 30) * 0.03), 20, 100);
     }
   }
   for (const inj of res.injuries) {
@@ -61,6 +63,7 @@ export function playGame(world: World, g: GameRec, keepLog = true): GameResult {
 
 function healDay(world: World) {
   for (const p of Object.values(world.players)) {
+    if (p.cond != null && p.cond < 100) p.cond = Math.min(100, p.cond + 13 + p.r.stamina / 14 - Math.max(0, (p.age ?? 27) - 30) * 0.5);
     if (p.injury && p.injury.daysLeft > 0) {
       p.injury.daysLeft--;
       if (p.injury.daysLeft <= 0) {
@@ -393,7 +396,7 @@ export function developPlayers(world: World) {
     }
     p.ovr = Math.round(playerValue(p));
     p.age = age + 1;
-    p.fatigueSeason = 0;
+    p.fatigueSeason = 0; p.cond = 100;
   }
 }
 

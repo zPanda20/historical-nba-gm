@@ -1,5 +1,5 @@
 import { useStore, openModal, commit, toast } from '../store';
-import { Panel, Btn, Logo, Headshot, ht, Chip } from '../util';
+import { Panel, Btn, Logo, ht, Chip, PlayerTile } from '../util';
 import { draftToMyPick, draftPlayer, autoDraftRest } from '../actions';
 import { scoutReport } from '../../sim/gm';
 import type { Player, World } from '../../sim/types';
@@ -19,12 +19,11 @@ function Range({ s, max = 92 }: { s?: { lo: number; hi: number; mid: number }; m
 }
 
 function ProspectRow({ w, p, action }: { w: World; p: Player; action?: any }) {
-  return <tr>
-    <td><Headshot p={p} size={34} /></td>
-    <td class="l b"><button data-nav class="link" onClick={() => openModal('player', { id: p.id })}>{p.name}</button></td>
-    <td>{p.pos}</td><td>{p.age}</td><td>{ht(p.hgt)}</td><td class="l small">{p.college ?? '—'}</td>
+  return <tr onClick={() => openModal('player', { id: p.id })}>
+    <td class="l" colSpan={2}><PlayerTile p={p} size={34} sub={<>{p.college ?? '—'}</>} /></td>
+    <td>{p.pos}</td><td>{p.age}</td><td>{ht(p.hgt)}</td>
     <td><Range s={p.scout?.now} /></td><td><Range s={p.scout?.pot} /></td><td>{p.scout?.now?.reports ?? 0}</td>
-    <td class="nowrap">{action}</td>
+    <td class="nowrap" onClick={(e: any) => e.stopPropagation()}>{action}</td>
   </tr>;
 }
 
@@ -39,7 +38,7 @@ export function Draft() {
     return <div class="screen">
       <div class="screen-h"><h2>Draft & Scouting</h2><div class="screen-meta">{year} class · Our picks: {picks.map(p => `R${p.round}${p.original !== u ? ` (${p.original})` : ''}`).join(', ') || 'none'} · Scout trips left this week: {left}</div></div>
       <Panel class="fill" title={`${year} draft board · ${cls.length} prospects`} right={<span class="muted">Ranges are our department's beliefs — not the truth. More reports narrow them.</span>}>
-        <table class="tbl rows"><thead><tr><th></th><th class="l">Prospect</th><th>Pos</th><th>Age</th><th>Ht</th><th class="l">School</th><th>Now</th><th>Ceiling</th><th>Rpts</th><th></th></tr></thead>
+        <table class="tbl rows"><thead><tr><th class="l" colSpan={2}>Prospect</th><th>Pos</th><th>Age</th><th>Ht</th><th>Now</th><th>Ceiling</th><th>Rpts</th><th></th></tr></thead>
           <tbody>{cls.slice(0, 120).map(p => <ProspectRow w={w!} p={p} action={<Btn kind="sm ghost" disabled={left <= 0} onClick={() => { (w as any).scoutCredits.used++; scoutReport(w!, p.id); commit(); toast(`Report filed on ${p.name}.`); }}>Send a scout</Btn>} />)}</tbody></table>
       </Panel>
     </div>;
@@ -61,7 +60,7 @@ export function Draft() {
       <Panel class="fill" title={onClock ? "You're on the clock" : 'Our board'} right={<div class="row-btns">
         {!onClock && <Btn kind="big" auto onClick={draftToMyPick}>Sim to our pick</Btn>}
         <Btn kind="ghost" onClick={() => { if (confirm('Let the scouts make the rest of our picks from our board?')) autoDraftRest(); }}>Auto-draft the rest</Btn></div>}>
-        <table class="tbl rows"><thead><tr><th></th><th class="l">Prospect</th><th>Pos</th><th>Age</th><th>Ht</th><th class="l">School</th><th>Now</th><th>Ceiling</th><th>Rpts</th><th></th></tr></thead>
+        <table class="tbl rows"><thead><tr><th class="l" colSpan={2}>Prospect</th><th>Pos</th><th>Age</th><th>Ht</th><th>Now</th><th>Ceiling</th><th>Rpts</th><th></th></tr></thead>
           <tbody>{board.slice(0, 60).map((p, i) => <ProspectRow w={w!} p={p} action={onClock ? <Btn kind={i === 0 ? 'sm' : 'sm ghost'} auto={i === 0} onClick={() => draftPlayer(p.id)}>Draft</Btn> : null} />)}</tbody></table>
       </Panel>
       <Panel title="Our picks" class="d-mine">

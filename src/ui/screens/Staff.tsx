@@ -1,5 +1,6 @@
 import { useStore, openModal, commit, toast } from '../store';
 import { Panel, Btn, Meter, Headshot, Chip } from '../util';
+import { ReqPanel } from '../deal';
 import type { Coach } from '../../sim/types';
 
 const STYLE: [keyof Coach, string][] = [['pace', 'Tempo'], ['post', 'Post-up offense'], ['motion', 'Motion offense'], ['iso', 'Isolation'], ['pressure', 'Defensive pressure'], ['depth', 'Bench depth'], ['devFocus', 'Plays young players'], ['experiment', 'Willing to experiment']];
@@ -32,6 +33,7 @@ export function Staff() {
         </div>
       </Panel>
       <div class="col">
+        <Panel title="What the coach wants"><ReqPanel w={w!} /></Panel>
         <Panel title="Your requests to the coach">
           {reqs.length ? reqs.map(([pid, r]) => <div class="li"><b>{w!.players[pid]?.name}</b><span>{r.kind === 'more' ? 'More minutes' : r.kind === 'protect' ? 'Manage his load' : 'Development focus'}</span><Chip kind={r.status === 'accepted' ? 'good' : r.status === 'refused' ? 'bad' : 'warn'}>{r.status}</Chip></div>)
             : <div class="muted">No requests yet. Open any player to ask the coach about his role.</div>}

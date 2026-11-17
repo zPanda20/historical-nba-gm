@@ -1,7 +1,9 @@
 import { useState } from 'preact/hooks';
 import { useStore, closeModal, commit, toast, openModal, go, setUI, ui } from './store';
-import { Headshot, Logo, Btn, Chip, Meter, ht, f1, pct, seasonLabel, OvrBadge, injuryChip, seenOvr } from './util';
+import { Headshot, Logo, Btn, Chip, Meter, ht, f1, pct, seasonLabel, OvrBadge, injuryChip, seenOvr, CondBar } from './util';
 import { MessageView } from './screens/People';
+import { NeedImpact, ReqPanel } from './deal';
+import { jobMarket, approachTeam, ensureOffer, takeJob, jobBar, MAX_APPROACHES } from '../sim/jobs';
 import { BoxScore } from './screens/Games';
 import { CLOCKS } from './Chrome';
 import { CoachCard } from './screens/Staff';
@@ -52,6 +54,8 @@ function PlayerModal({ w, id }: { w: World; id: string }) {
         </div>
         {injuryChip(p)}
         {mine && <div class="pm-mood"><span>Mood</span><Meter v={p.morale ?? 60} /></div>}
+        <div class="pm-mood"><span>Condition</span><CondBar p={p} /></div>
+        <div class="pm-mood"><span>Stamina</span><b>{mine ? p.r.stamina : word(p.r.stamina)}</b></div>
       </div>
       <div class="pm-m">
         {mine || !p.scout ? <div class="pm-ratings">{GROUPS.map(([g, ks]) => <div class="rg"><h4>{g}</h4>{ks.map(([k, l]) => {
@@ -135,6 +139,7 @@ function OfferModal({ w, pid, msgId }: { w: World; pid: string; msgId?: string }
         <Btn kind="sm ghost" onClick={() => setSal(Math.max(30000, sal - 10000))}>−</Btn><b>{fmt$(sal)}</b><Btn kind="sm ghost" onClick={() => setSal(sal + 10000)}>+</Btn></div>
       <div class="stepper"><span>Years</span>
         {[1, 2, 3, 4, 5].map(y => <button data-nav class={`btn sm ${yrs === y ? '' : 'ghost'}`} onClick={() => setYrs(y)}>{y}</button>)}</div>
+      {!own && <NeedImpact w={w} after={[...t.roster, p.id]} />}
       {full && <div class="reply bad">Roster is full ({t.roster.length}). Release someone first.</div>}
       {res && <div class="reply">{res.text}</div>}
       <div class="row-btns"><Btn kind="big" auto disabled={full} onClick={go_}>Make the offer</Btn><Btn kind="ghost" onClick={closeModal}>Walk away</Btn></div>
@@ -166,6 +171,7 @@ function CoachTalk({ w }: { w: World }) {
   return <Shell title={`Coach ${last}'s office`}>
     <CoachCard c={c} compact />
     <div class="quote">"{n.detail} If you can find me {n.need}, we're a better team."</div>
+    <ReqPanel w={w} />
     <div class="li"><span>His trust in you</span><Meter v={c.trustGM ?? 55} /></div>
     <div class="row-btns"><Btn kind="big" auto onClick={() => go('office', 'trade')}>Look for {n.need}</Btn><Btn kind="ghost" onClick={closeModal}>Thanks, coach</Btn></div>
     <div class="muted small">You can ask about any player's role from his player card. The coach decides the rotation.</div>
@@ -208,8 +214,29 @@ export function Modals() {
     case 'fireCoach': { const nu = w.coaches[m.arg.id]; const old = w.coaches[w.teams[w.meta.userTeam].coach];
       return <Shell title="Make a coaching change?"><p>Fire <b>{old.name}</b> and hire <b>{nu.name}</b>? The players, the owner and the press will all have an opinion.</p>
         <div class="row-btns"><Btn kind="big" onClick={() => { fireCoach(w, nu.id); closeModal(); commit(); toast(`${nu.name} is your new head coach.`); }}>Make the change</Btn><Btn kind="ghost" auto onClick={closeModal}>Not yet</Btn></div></Shell>; }
+    case 'jobs': return <JobsModal w={w} />;
     case 'notice': return <Shell title={m.arg.title}><p>{m.arg.body}</p><div class="row-btns"><Btn kind="big" auto onClick={closeModal}>OK</Btn></div></Shell>;
   }
   return null;
 }
 export { OvrBadge };
+
+function JobsModal({ w }: { w: World }) {
+  const jm = jobMarket(w);
+  const [log, setLog] = useState<string[]>([]);
+  if (!jm) return <Shell title="Job market"><p>No openings right now.</p></Shell>;
+  const call = (tid: string) => { const r = approachTeam(w, tid); const fb = ensureOffer(w); setLog([...log, r.text, ...(fb ? [`The phone rings: ${w.teams[fb].owner} of the ${w.teams[fb].city} ${w.teams[fb].name} wants to talk. The job is yours if you want it.`] : [])]); commit(); };
+  const left = MAX_APPROACHES - jm.approached.length;
+  return <Shell wide title="Work the phones">
+    <p class="muted">Five teams are looking for a general manager. You can make {MAX_APPROACHES} calls. Better teams are pickier; your reputation is {Math.round(w.gmRep)}/100. If nobody you call bites, someone else will call you.</p>
+    <div class="jobs">{jm.openings.map(id => { const t = w.teams[id]; const st = jm.offers.includes(id) ? 'offer' : jm.declined.includes(id) ? 'no' : jm.approached.includes(id) ? 'called' : '';
+      return <div class={`job ${st}`}>
+        <Logo t={t} size={64} /><div class="job-i"><b>{t.city} {t.name}</b><small>{t.w}–{t.l} · owner {t.owner} · {t.clock}</small>
+          <small>{jobBar(w, id) > w.gmRep + 8 ? 'A reach for your résumé' : jobBar(w, id) > w.gmRep - 4 ? 'Could go either way' : 'They should be interested'}</small></div>
+        {st === 'offer' ? <Btn kind="big" auto onClick={() => { takeJob(w, id); setUI({ modal: null, screen: 'home' }); commit(); toast(`You're the new GM of the ${t.city} ${t.name}.`); }}>Take the job</Btn>
+          : st === 'no' ? <Chip kind="bad">Not interested</Chip>
+            : <Btn disabled={left <= 0} onClick={() => call(id)}>Call {t.owner.split(' ').slice(-1)[0]}</Btn>}
+      </div>; })}</div>
+    {log.length > 0 && <div class="job-log">{log.map(l => <div class="reply">{l}</div>)}</div>}
+  </Shell>;
+}

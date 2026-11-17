@@ -4,6 +4,10 @@ import { standings } from '../sim/league';
 import { mostUrgent } from './actions';
 import type { ClockState } from '../sim/types';
 
+export function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen?.();
+  else document.documentElement.requestFullscreen?.().catch(() => { /* not allowed here */ });
+}
 export const CLOCKS: ClockState[] = ['Rebuilding', 'Building', 'Contending', 'Win Now'];
 
 export function TopBar() {
@@ -30,6 +34,7 @@ export function TopBar() {
       <div class="tb-day">{dateLong(S.day)}</div>
       <div class="tb-phase">{seasonLabel(S.year)} · {PHASE_LABEL[S.phase]}{w!.meta.mode === 'sandbox' ? ' · Sandbox' : ''}</div>
     </div>
+    <button data-nav class="tb-fs" title="Full screen (F)" onClick={toggleFullscreen}>{document.fullscreenElement ? '⤡' : '⤢'}</button>
     <button data-nav class="tb-clock" onClick={() => openModal('clock')} title="Franchise clock">
       <div class="tb-clock-l">Franchise clock</div>
       <div class="tb-clock-s">{CLOCKS.map(c => <span class={c === w!.clock ? 'on' : ''}>{c}</span>)}</div>
@@ -60,9 +65,9 @@ export function DeviceSlot() {
     <div class="slip-h">While You Were Out</div>
     {m ? <>
       <div class="slip-row"><span>For</span><b>GM</b><span>Date</span><b>{m.date.slice(5).replace('-', '/')}</b></div>
-      <div class="slip-from"><span>{m.role === 'Owner' ? 'Mr.' : ''}</span>{m.from}</div>
+      <div class="slip-from">{m.from}</div>
       <div class="slip-checks">
-        <i class={m.urgent >= 2 ? 'x' : ''}>Urgent</i><i class={m.actions?.length ? 'x' : ''}>Please call</i><i class={m.urgent < 2 ? 'x' : ''}>FYI</i>
+        <i class={m.urgent >= 2 ? 'ck' : ''}>Urgent</i><i class={m.actions?.length ? 'ck' : ''}>Please call</i><i class={m.urgent < 2 ? 'ck' : ''}>FYI</i>
       </div>
       <div class="slip-msg">{m.subject}</div>
       {more > 0 && <div class="slip-more">+{more} more on the desk</div>}

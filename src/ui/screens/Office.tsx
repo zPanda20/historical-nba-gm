@@ -1,7 +1,10 @@
 import { useState } from 'preact/hooks';
 import { useStore, openModal, commit, toast, ui, setUI } from '../store';
-import { place, Panel, Btn, Tabs, curTab, Logo, Headshot, OvrBadge, Chip, Meter, dateShort, injuryChip } from '../util';
-import { rightsOk, evaluateTrade, executeTrade, fmt$, payroll, marketSalary, TRADE_DEADLINE, tradeValue } from '../../sim/gm';
+import { place, Panel, Btn, Tabs, curTab, Logo, OvrBadge, Chip, Meter, dateShort, injuryChip, PlayerTile, SortTable, seenOvr } from '../util';
+import { rightsOk, evaluateTrade, executeTrade, fmt$, payroll, marketSalary, tradeLegal } from '../../sim/gm';
+import type { TradeReply } from '../../sim/gm';
+import { openRequest, needDef, seenRating } from '../../sim/needs';
+import { TradeCard, ReqPanel } from '../deal';
 import { playerValue } from '../../sim/coach';
 import type { World, Player } from '../../sim/types';
 import { ClockPicker } from '../Modals';
@@ -11,49 +14,54 @@ const pkKey = (p: PK) => `${p.season}-${p.round}-${p.original}`;
 
 function TradeFinder({ w }: { w: World }) {
   const u = w.meta.userTeam;
-  const others = Object.values(w.teams).filter(t => t.id !== u).sort((a, b) => a.city.localeCompare(b.city));
+  const others = Object.values(w.teams).filter(t => t.id !== u).sort((a, b) => place(a).localeCompare(place(b)));
   const d = ui.tradeDraft ?? { other: others[0].id, give: [], get: [], givePicks: [], getPicks: [] };
-  const [reply, setReply] = useState<{ text: string; ok: boolean } | null>(null);
+  const [reply, setReply] = useState<TradeReply | null>(null);
   const set = (patch: any) => { setReply(null); setUI({ tradeDraft: { ...d, ...patch } }); };
   const O = w.teams[d.other], U = w.teams[u];
   const S = w.season;
-  const closed = S.phase === 'playoffs' || (S.phase === 'regular' && S.day > TRADE_DEADLINE(S.year)) || S.phase === 'draft';
+  const closed = tradeLegal(w, { ...d, give: ['x'], get: ['y'] } as any);
+  const closedHard = closed && /deadline|playoffs|draft/.test(closed) ? closed : null;
   const toggle = (k: 'give' | 'get', id: string) => set({ [k]: d[k].includes(id) ? d[k].filter((x: string) => x !== id) : [...d[k], id] });
   const toggleP = (k: 'givePicks' | 'getPicks', p: PK) => set({ [k]: d[k].some((x: PK) => pkKey(x) === pkKey(p)) ? d[k].filter((x: PK) => pkKey(x) !== pkKey(p)) : [...d[k], { season: p.season, round: p.round, original: p.original }] });
   const picks = (tid: string) => w.teams[tid].picks.filter(p => p.season > S.year && p.round <= 2 && !(S.phase === 'draft' && p.season === S.year + 1)).sort((a, b) => a.season - b.season || a.round - b.round);
-  const myView = d.get.reduce((s: number, id: string) => s + tradeValue(w, w.players[id], u), 0) - d.give.reduce((s: number, id: string) => s + tradeValue(w, w.players[id], u), 0);
-  const propose = () => {
-    const ev = evaluateTrade(w, d);
-    setReply({ text: ev.reason, ok: ev.accept });
-  };
-  const confirm = () => {
-    executeTrade(w, d);
+  const propose = () => setReply(evaluateTrade(w, d));
+  const done = (offer: any) => {
+    executeTrade(w, offer);
     setReply(null); setUI({ tradeDraft: { other: d.other, give: [], get: [], givePicks: [], getPicks: [] } });
     commit(); toast('Trade completed.');
   };
-  const PRow = ({ p, side }: { p: Player; side: 'give' | 'get' }) => <button data-nav class={`tr-p ${d[side].includes(p.id) ? 'on' : ''}`} onClick={() => toggle(side, p.id)}>
-    <Headshot p={p} size={34} /><div class="tr-n"><b>{p.name}</b><small>{p.pos} · {p.age} · {p.contract ? `${fmt$(p.contract.salary)} × ${p.contract.years}` : '—'}</small></div><OvrBadge w={w} p={p} />{injuryChip(p)}
-  </button>;
+  const takeCounter = () => {
+    const c = reply!.counter!;
+    const offer = { ...d, give: c.give ? [...d.give, c.give] : d.give, givePicks: c.givePick ? [...d.givePicks, c.givePick] : d.givePicks };
+    done(offer);
+  };
+  const PRow = ({ p, side }: { p: Player; side: 'give' | 'get' }) => <div class={`tr-p ${d[side].includes(p.id) ? 'on' : ''}`}>
+    <button data-nav class="tr-pick" title={d[side].includes(p.id) ? 'Take out of the deal' : 'Put in the deal'} onClick={() => toggle(side, p.id)}>{d[side].includes(p.id) ? '✓' : '+'}</button>
+    <PlayerTile p={p} size={34} sub={<>{p.pos} · {p.age} · {p.contract ? `${fmt$(p.contract.salary)} × ${p.contract.years}` : '—'}</>} right={<><OvrBadge w={w} p={p} />{injuryChip(p)}</>} />
+  </div>;
+  const empty = !d.give.length && !d.get.length && !d.givePicks.length && !d.getPicks.length;
   return <div class="trade">
     <div class="tr-teams">{others.map(t => <button data-nav class={`tr-t ${t.id === d.other ? 'on' : ''}`} onClick={() => set({ other: t.id, get: [], getPicks: [] })}><Logo t={t} size={28} /><span>{place(t)}</span><small>{t.w}–{t.l}</small></button>)}</div>
-    <Panel title={<><Logo t={U} size={26} /> You send</>} class="tr-col">
+    <Panel title={<><Logo t={U} size={26} /> Our roster</>} class="tr-col">
       {U.roster.map(id => w.players[id]).sort((a, b) => playerValue(b) - playerValue(a)).map(p => <PRow p={p} side="give" />)}
-      <div class="tr-picks">{picks(u).map(p => <button data-nav class={`pk ${d.givePicks.some((x: PK) => pkKey(x) === pkKey(p)) ? 'on' : ''}`} onClick={() => toggleP('givePicks', p)}>{p.season} R{p.round}{p.original !== u ? ` (${p.original})` : ''}</button>)}</div>
+      <div class="tr-picks">{picks(u).map(p => <button data-nav class={`pk ${d.givePicks.some((x: PK) => pkKey(x) === pkKey(p)) ? 'on' : ''}`} onClick={() => toggleP('givePicks', p)}>{p.season} {p.round === 1 ? '1st' : '2nd'}{p.original !== u ? ` (${p.original})` : ''}</button>)}</div>
     </Panel>
-    <Panel title={<><Logo t={O} size={26} /> You receive</>} right={<span class="muted">GM {O.gm} · {O.clock}</span>} class="tr-col">
+    <Panel title={<><Logo t={O} size={26} /> {O.city} {O.name}</>} right={<span class="muted">GM {O.gm} · {O.clock}</span>} class="tr-col">
       {O.roster.map(id => w.players[id]).sort((a, b) => playerValue(b) - playerValue(a)).map(p => <PRow p={p} side="get" />)}
-      <div class="tr-picks">{picks(O.id).map(p => <button data-nav class={`pk ${d.getPicks.some((x: PK) => pkKey(x) === pkKey(p)) ? 'on' : ''}`} onClick={() => toggleP('getPicks', p)}>{p.season} R{p.round}{p.original !== O.id ? ` (${p.original})` : ''}</button>)}</div>
+      <div class="tr-picks">{picks(O.id).map(p => <button data-nav class={`pk ${d.getPicks.some((x: PK) => pkKey(x) === pkKey(p)) ? 'on' : ''}`} onClick={() => toggleP('getPicks', p)}>{p.season} {p.round === 1 ? '1st' : '2nd'}{p.original !== O.id ? ` (${p.original})` : ''}</button>)}</div>
     </Panel>
-    <div class="tr-bar">
-      <div class="tr-sum">
-        <span>Send: <b>{[...d.give.map((id: string) => w.players[id].name), ...d.givePicks.map((p: PK) => `${p.season} R${p.round}`)].join(', ') || '—'}</b></span>
-        <span>Receive: <b>{[...d.get.map((id: string) => w.players[id].name), ...d.getPicks.map((p: PK) => `${p.season} R${p.round}`)].join(', ') || '—'}</b></span>
-        <span class="muted">Our staff's read: {myView > 3 ? 'we come out ahead' : myView < -3 ? 'we give up more talent' : 'roughly even'} · Payroll after: {fmt$(payroll(w, u) - d.give.reduce((s: number, id: string) => s + (w.players[id].contract?.salary ?? 0), 0) + d.get.reduce((s: number, id: string) => s + (w.players[id].contract?.salary ?? 0), 0))}</span>
+    <div class="tr-deal">
+      {empty ? <div class="tr-empty"><b>Build a deal</b><p>Press + next to players and picks on either side. Your staff will tell you what they think of it before you call {O.gm}.</p></div>
+        : <TradeCard w={w} offer={d} />}
+      {reply && <div class={`tr-reply ${reply.accept ? 'ok' : ''}`}>{reply.reason}</div>}
+      <div class="row-btns">
+        {closedHard ? <Chip kind="bad">{closedHard}</Chip>
+          : reply?.accept ? <Btn kind="big" auto onClick={() => done(d)}>Shake on it</Btn>
+            : reply?.counter ? <><Btn kind="big" auto onClick={takeCounter}>Add {reply.counter.label} and do it</Btn><Btn kind="ghost" onClick={() => setReply(null)}>Keep working</Btn></>
+              : <Btn kind="big" disabled={empty} onClick={propose}>Call {O.gm.split(' ').slice(-1)[0]}</Btn>}
+        {!empty && <Btn kind="ghost" onClick={() => set({ give: [], get: [], givePicks: [], getPicks: [] })}>Clear</Btn>}
       </div>
-      {reply && <div class={`tr-reply ${reply.ok ? 'ok' : ''}`}>{reply.text}</div>}
-      {closed ? <Chip kind="bad">Trading is closed ({S.phase === 'regular' ? 'past the deadline' : S.phase})</Chip>
-        : reply?.ok ? <Btn kind="big" auto onClick={confirm}>Shake on it</Btn>
-          : <Btn kind="big" disabled={!d.give.length && !d.givePicks.length} onClick={propose}>Make the call</Btn>}
     </div>
   </div>;
 }
@@ -63,33 +71,46 @@ function FreeAgents({ w }: { w: World }) {
   const pool = w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && rightsOk(p, u))
     .sort((a, b) => (b.draftedBy === u ? 1 : 0) - (a.draftedBy === u ? 1 : 0) || playerValue(b) - playerValue(a)).slice(0, 80);
   const t = w.teams[u];
-  return <Panel class="fill" title={`Free agents (${pool.length})`} right={<span class="muted">Roster {t.roster.length}/12 · Payroll {fmt$(payroll(w, u))} of {fmt$(w.owner.budget)} budget</span>}>
-    <table class="tbl rows"><thead><tr><th></th><th class="l">Player</th><th>Pos</th><th>Age</th><th>Est.</th><th>Asking</th><th class="l">Status</th><th></th></tr></thead>
-      <tbody>{pool.map(p => <tr>
-        <td><Headshot p={p} size={34} /></td><td class="l b"><button data-nav class="link" onClick={() => openModal('player', { id: p.id })}>{p.name}</button></td><td>{p.pos}</td><td>{p.age}</td><td><OvrBadge w={w} p={p} /></td>
-        <td>{fmt$(p.ask ?? marketSalary(p))}</td><td class="l">{p.draftedBy === u ? <Chip kind="good">Our draft rights</Chip> : <span class="muted">{p.rosterStatus}</span>}</td>
-        <td><Btn kind="sm" onClick={() => openModal('offer', { pid: p.id })}>Offer</Btn></td></tr>)}</tbody></table>
-  </Panel>;
+  const req = openRequest(w);
+  const reqDef = req ? needDef(req.key) : null;
+  return <div class="fa-wrap">
+    {req && <Panel title="What the coach asked for" class="fa-req"><ReqPanel w={w} /><div class="muted small">Open a player to see how signing him would move this.</div></Panel>}
+    <Panel class="fill" title={`Free agents (${pool.length})`} right={<span class="muted">Roster {t.roster.length}/12 · payroll {fmt$(payroll(w, u))} of {fmt$(w.owner.budget)}</span>}>
+      <SortTable id="fa" rows={pool} onRow={p => openModal('offer', { pid: p.id })} cols={[
+        { key: 'name', label: 'Player', cls: 'l', get: p => p.name, desc: false, render: p => <PlayerTile p={p} size={34} /> },
+        { key: 'pos', label: 'Pos', get: p => p.pos, desc: false, render: p => p.pos },
+        { key: 'age', label: 'Age', get: p => p.age ?? 0, desc: false, render: p => p.age },
+        { key: 'est', label: 'Est.', get: p => seenOvr(w, p).mid, render: p => <OvrBadge w={w} p={p} /> },
+        ...(reqDef ? [{ key: 'need', label: reqDef.label, get: (p: Player) => Math.round(reqDef.f(Object.fromEntries(Object.keys(p.r).map(k => [k, seenRating(w, p, k as any)])) as any)), render: (p: Player) => Math.round(reqDef.f(Object.fromEntries(Object.keys(p.r).map(k => [k, seenRating(w, p, k as any)])) as any)), title: 'Our staff\'s estimate of what the coach asked for' }] : []),
+        { key: 'ask', label: 'Asking', get: p => p.ask ?? marketSalary(p), render: p => fmt$(p.ask ?? marketSalary(p)) },
+        { key: 'st', label: 'Status', cls: 'l', render: p => p.draftedBy === u ? <Chip kind="good">Our draft rights</Chip> : <span class="muted small">{p.rosterStatus}</span> },
+        { key: 'act', label: '', render: p => <Btn kind="sm" onClick={() => openModal('offer', { pid: p.id })}>Offer</Btn> },
+      ]} />
+    </Panel>
+  </div>;
 }
 
 function Contracts({ w }: { w: World }) {
   const u = w.meta.userTeam, t = w.teams[u];
-  const ps = t.roster.map(id => w.players[id]).sort((a, b) => (b.contract?.salary ?? 0) - (a.contract?.salary ?? 0));
+  const ps = t.roster.map(id => w.players[id]);
   const pay = payroll(w, u);
   const off = w.season.phase === 'freeagency';
-  return <div class="two">
-    <Panel class="fill" title="Contracts" right={<span class="muted">Payroll {fmt$(pay)} · Owner budget {fmt$(w.owner.budget)}</span>}>
+  const exp = (p: Player) => (p.contract?.years ?? 0) <= (off ? 0 : 1);
+  return <div class="two wide-l">
+    <Panel class="fill" title="Contracts" right={<span class="muted">Payroll {fmt$(pay)} · owner budget {fmt$(w.owner.budget)}</span>}>
       <div class="pay-meter"><Meter v={pay} max={Math.max(pay, w.owner.budget) * 1.1} /><span class={pay > w.owner.budget ? 'bad' : ''}>{pay > w.owner.budget ? `${fmt$(pay - w.owner.budget)} over budget` : `${fmt$(w.owner.budget - pay)} under budget`}</span></div>
-      <table class="tbl rows"><thead><tr><th class="l">Player</th><th>Age</th><th>OVR</th><th>Salary</th><th>Years left</th><th class="l">Source</th><th></th></tr></thead>
-        <tbody>{ps.map(p => { const exp = (p.contract?.years ?? 0) <= (off ? 0 : 1);
-          return <tr class={exp ? 'hl' : ''}>
-            <td class="l b"><button data-nav class="link" onClick={() => openModal('player', { id: p.id })}>{p.name}</button></td><td>{p.age}</td><td><span class="ovr">{p.ovr}</span></td>
-            <td>{p.contract ? fmt$(p.contract.salary) : '—'}</td><td>{p.contract?.years ?? 0}{exp && <Chip kind="warn">{off ? 'Unsigned' : 'Expiring'}</Chip>}</td>
-            <td class="l small muted">{p.contract?.provenance}</td>
-            <td class="nowrap">{exp && <Btn kind="sm" onClick={() => openModal('offer', { pid: p.id })}>{off ? 'Re-sign' : 'Extend'}</Btn>} <Btn kind="sm ghost" onClick={() => openModal('release', { pid: p.id })}>Release</Btn></td></tr>; })}</tbody></table>
+      <SortTable id="contracts" rows={ps} def="sal:d" rowCls={p => exp(p) ? 'hl' : ''} onRow={p => openModal('player', { id: p.id })} cols={[
+        { key: 'name', label: 'Player', cls: 'l', get: p => p.name, desc: false, render: p => <PlayerTile p={p} size={34} /> },
+        { key: 'age', label: 'Age', get: p => p.age ?? 0, render: p => p.age },
+        { key: 'ovr', label: 'OVR', get: p => p.ovr, render: p => <span class="ovr">{p.ovr}</span> },
+        { key: 'sal', label: 'Salary', get: p => p.contract?.salary ?? 0, render: p => p.contract ? fmt$(p.contract.salary) : '—' },
+        { key: 'yrs', label: 'Years left', get: p => p.contract?.years ?? 0, desc: false, render: p => <>{p.contract?.years ?? 0}{exp(p) && <Chip kind="warn">{off ? 'Unsigned' : 'Expiring'}</Chip>}</> },
+        { key: 'src', label: 'Source', cls: 'l small muted', render: p => p.contract?.provenance },
+        { key: 'act', label: '', cls: 'nowrap', render: p => <>{exp(p) && <Btn kind="sm" onClick={() => openModal('offer', { pid: p.id })}>{off ? 'Re-sign' : 'Extend'}</Btn>} <Btn kind="sm ghost" onClick={() => openModal('release', { pid: p.id })}>Release</Btn></> },
+      ]} />
     </Panel>
     <Panel title="How money works here">
-      <p class="muted">Salaries for 1976 are <b>reconstructed estimates</b> for simulation, labelled R. Anything signed in this save is simulated. There is no salary cap in 1976–77 — your limit is the owner's budget and his patience.</p>
+      <p class="muted">Salaries for 1976 are <b>reconstructed estimates</b> for simulation, marked R. Anything signed in this save is simulated. There is no salary cap in 1976–77; your limit is the owner's budget and his patience.</p>
       <p class="muted">Contracts tick down at the end of each season. In the offseason, unsigned players leave when the new season starts.</p>
     </Panel>
   </div>;

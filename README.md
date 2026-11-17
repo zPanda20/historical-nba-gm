@@ -5,7 +5,7 @@ Be the general manager of an NBA franchise from October 1976. Alpha 0.1 covers t
 **Play:** https://zpanda20.github.io/historical-nba-gm/
 
 ## Controls
-Arrow keys move the selection, Enter chooses. 1–8 jump between sections. Tab opens the most urgent call on your desk. Space looks up to the rafters. Esc closes things and opens the pause menu. The mouse works everywhere too.
+Arrow keys move the selection, Enter chooses. 1–8 jump between sections. Tab opens the most urgent call on your desk. Space looks up to the rafters. Esc closes things and opens the pause menu. F toggles full screen. The mouse works everywhere too.
 
 ## How it works
 - A possession-by-possession engine tuned to 1976–77 league numbers. Watched games and fast sims run the same engine. Nothing is scripted.

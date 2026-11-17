@@ -1,5 +1,8 @@
-import { useStore, go, openModal, setUI } from '../store';
-import { Logo, Headshot, Panel, Btn, dateShort, teamRec, lastName, f1, seasonLabel, injuryChip } from '../util';
+import { useStore, go, openModal, setUI, commit as commitNow } from '../store';
+import { Logo, Headshot, Panel, Btn, dateShort, teamRec, lastName, f1, seasonLabel, injuryChip, CondBar } from '../util';
+import { Bracket } from '../Bracket';
+import { ReqPanel } from '../deal';
+import { openRequest } from '../../sim/needs';
 import { sim, watchNext, nextUserGame, lastUserGame, beginNextSeason, seasonStartProblems } from '../actions';
 import { makeGameplan } from '../../sim/coach';
 import { standings, perGame } from '../../sim/league';
@@ -112,6 +115,7 @@ function OnTheFloor({ w }: { w: World }) {
         <div class="five-pos">{p.pos}</div>
         <div class="five-n">{p.name}</div>
         <div class="five-s">{s.g ? `${f1(s.ppg)} pts · ${f1(s.rpg)} reb · ${f1(s.apg)} ast` : `${p.age} yrs · ${p.ovr} OVR`}</div>
+        <CondBar p={p} />
       </button>;
     })}</div>
     {out.length > 0 && <div class="floor-out">Out: {out.map(p => <span>{p.name} {injuryChip(p)}</span>)}</div>}
@@ -148,24 +152,43 @@ function Bosses({ w }: { w: World }) {
     <div class="boss"><div><label>Owner · {w.owner.name}</label><b>{word(sat)}</b></div><div class="meter"><i style={{ width: `${sat}%` }} /></div></div>
     <div class="boss-obj">{w.owner.objective}</div>
     <div class="boss"><div><label>Coach {lastName(c.name)}'s trust in you</label><b>{word(trust)}</b></div><div class="meter"><i style={{ width: `${trust}%` }} /></div></div>
-    <button data-nav class="link" onClick={() => setUI({ rafters: true })}>Look up to the rafters ›</button>
+    {openRequest(w) && <ReqPanel w={w} />}
   </Panel>;
 }
 
 export function Home() {
   const { world: w } = useStore();
-  return <div class="home">
+  const S = w!.season;
+  if (w!.meta.fired) return <Fired />;
+  const showBracket = S.phase === 'playoffs' || (S.phase === 'regular' && w!.teams[w!.meta.userTeam].w + w!.teams[w!.meta.userTeam].l >= 72) || (S.phase === 'draft');
+  return <div class={`home ${showBracket ? 'po' : ''}`}>
     <section class="court">
       <div class="court-floor"><div class="court-paint" /><div class="court-circle"><img src={`assets/logos/${w!.teams[w!.meta.userTeam].abbr}.png`} alt="" /></div><div class="court-paint r" /></div>
       <NextGame w={w!} />
       <Scoreboard w={w!} />
       <SimControls w={w!} />
     </section>
-    <OnTheFloor w={w!} />
-    <div class="home-row">
+    {showBracket ? <Panel title={S.phase === 'regular' ? 'Playoff picture' : `${seasonLabel(S.year)} playoffs`} class="home-bk"><Bracket w={w!} compact /></Panel> : <OnTheFloor w={w!} />}
+    {!showBracket && <div class="home-row">
       <Headlines w={w!} />
       <Division w={w!} />
       <Bosses w={w!} />
+    </div>}
+  </div>;
+}
+
+function Fired() {
+  const { world: w } = useStore();
+  const old = w!.teams[w!.meta.userTeam];
+  return <div class="fired">
+    <div class="fired-paper">
+      <div class="paper-mast">The Daily Box Score</div>
+      <h1>{old.name} fire {w!.meta.gmName === 'General Manager' ? 'their general manager' : `general manager ${w!.meta.gmName}`}</h1>
+      <p>{w!.owner.name} made the change after a {old.w}–{old.l} record fell short of what he expected. "We need a new direction," he said.</p>
+    </div>
+    <div class="fired-act">
+      <p>Teams with openings will take your call. Not every one will want you, but someone will.</p>
+      <div class="row-btns"><Btn kind="big" auto onClick={() => openModal('jobs')}>Work the phones</Btn><Btn kind="ghost" onClick={() => { w!.meta.mode = 'sandbox'; w!.meta.fired = false; (w as any).jobMarket = undefined; commitNow(); }}>Stay on in sandbox mode</Btn></div>
     </div>
   </div>;
 }

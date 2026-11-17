@@ -26,7 +26,7 @@ export interface Player {
   traits: Record<string, number>; traitsNote: string; draft: any; kind: string; sampleMin: number; headshot: boolean;
   contract: Contract | null; ask?: number; draftClass?: number;
   // dynamic
-  injury?: Injury | null; fatigueSeason?: number; morale?: number; retired?: boolean; draftedBy?: string; draftPick?: number;
+  injury?: Injury | null; fatigueSeason?: number; cond?: number; morale?: number; retired?: boolean; draftedBy?: string; draftPick?: number;
   stats?: SeasonLine[]; awards?: { season: number; award: string }[];
   scout?: Record<string, { lo: number; hi: number; mid: number; reports: number }>; // user-team belief (prospects)
   promise?: { kind: string; due: string; made: string } | null;

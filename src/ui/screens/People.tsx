@@ -1,6 +1,7 @@
 import { useStore, setUI, ui, commit, openModal } from '../store';
 import { Panel, Btn, Tabs, curTab, dateShort, Chip } from '../util';
 import { runCommand } from '../actions';
+import { TradeCard, ReqPanel } from '../deal';
 import type { Message, World } from '../../sim/types';
 
 export function MessageView({ w, m, inModal }: { w: World; m: Message; inModal?: boolean }) {
@@ -9,11 +10,12 @@ export function MessageView({ w, m, inModal }: { w: World; m: Message; inModal?:
     <div class="msg-from">{m.from} <small>{m.role}</small></div>
     <h3 class="msg-s">{m.subject}</h3>
     <p class="msg-b">{m.body}</p>
+    {m.tag === 'Trade' && m.actions?.[0]?.arg?.other && <TradeCard w={w} read={!m.resolved} offer={{ givePicks: [], getPicks: [], ...m.actions[0].arg }} />}
+    {m.tag === 'Coach request' && !m.resolved && <ReqPanel w={w} />}
     {!m.resolved && <div class="row-btns">
       {(m.actions?.length ? m.actions : [{ label: 'Got it', cmd: 'dismiss' }]).map((a, i) => <Btn kind={i === 0 ? 'big' : 'ghost'} auto={i === 0} onClick={() => { if (inModal && a.cmd !== 'goto') setUI({ modal: null }); runCommand(m, a); }}>{a.label}</Btn>)}
     </div>}
     {m.resolved && <div class="muted">Handled.</div>}
-    {void w}
   </div>;
 }
 

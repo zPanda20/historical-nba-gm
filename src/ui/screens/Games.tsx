@@ -9,8 +9,8 @@ export function BoxScore({ w, g }: { w: World; g: GameRec }) {
   const Side = ({ lines, t }: { lines: BoxLine[]; t: any }) => {
     const tot = lines.reduce((a: any, l: any) => { for (const k of ['min', 'pts', 'fgm', 'fga', 'ftm', 'fta', 'oreb', 'dreb', 'ast', 'stl', 'blk', 'tov', 'pf']) a[k] = (a[k] ?? 0) + l[k]; return a; }, {});
     return <table class="tbl compact box"><thead><tr><th class="l"><Logo t={t} size={20} /> {t.name}</th><th>MIN</th><th>FG</th><th>FT</th><th>OR</th><th>REB</th><th>AST</th><th>STL</th><th>BLK</th><th>TO</th><th>PF</th><th>PTS</th></tr></thead>
-      <tbody>{lines.filter(l => l.min > 0 || l.gs).sort((a, b) => (b.gs ? 1 : 0) - (a.gs ? 1 : 0) || b.min - a.min).map(l => <tr class={l.gs ? 'st' : ''}>
-        <td class="l"><button data-nav class="link" onClick={() => openModal('player', { id: l.pid })}>{l.name}</button></td><td>{Math.round(l.min)}</td><td>{l.fgm}-{l.fga}</td><td>{l.ftm}-{l.fta}</td><td>{l.oreb}</td><td>{l.oreb + l.dreb}</td><td>{l.ast}</td><td>{l.stl}</td><td>{l.blk}</td><td>{l.tov}</td><td>{l.pf}</td><td class="b">{l.pts}</td></tr>)}
+      <tbody>{lines.filter(l => l.min > 0 || l.gs).sort((a, b) => (b.gs ? 1 : 0) - (a.gs ? 1 : 0) || b.min - a.min).map(l => <tr class={l.gs ? 'st' : ''} onClick={() => openModal('player', { id: l.pid })}>
+        <td class="l"><button data-nav class="ptile mini" onClick={(e: any) => { e.stopPropagation(); openModal('player', { id: l.pid }); }}><b>{l.name}</b>{l.gs ? <small>starter</small> : null}</button></td><td>{Math.round(l.min)}</td><td>{l.fgm}-{l.fga}</td><td>{l.ftm}-{l.fta}</td><td>{l.oreb}</td><td>{l.oreb + l.dreb}</td><td>{l.ast}</td><td>{l.stl}</td><td>{l.blk}</td><td>{l.tov}</td><td>{l.pf}</td><td class="b">{l.pts}</td></tr>)}
         <tr class="tot"><td class="l">Team</td><td>{Math.round(tot.min)}</td><td>{tot.fgm}-{tot.fga}</td><td>{tot.ftm}-{tot.fta}</td><td>{tot.oreb}</td><td>{tot.oreb + tot.dreb}</td><td>{tot.ast}</td><td>{tot.stl}</td><td>{tot.blk}</td><td>{tot.tov}</td><td>{tot.pf}</td><td class="b">{tot.pts}</td></tr>
       </tbody></table>;
   };

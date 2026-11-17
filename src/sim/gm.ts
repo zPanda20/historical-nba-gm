@@ -3,6 +3,10 @@ import type { ClockState, Player, Team, World } from './types';
 import { clamp, sigmoid, stream } from './rng';
 import { coachRespond, playerValue } from './coach';
 import { addEvent, addMessage, addNews, potentialOvr, projectedWins, teamStrength } from './world';
+import { executeTradeBetween, aiProposeTrade, aiAiTrades } from './trade';
+import type { TradeOffer } from './trade';
+import { openJobMarket } from './jobs';
+import { checkCoachRequest, makeCoachRequest, openRequest, worstNeed, needDef } from './needs';
 
 export const TRADE_DEADLINE = (year: number) => `${year + 1}-02-15`; // alpha assumption, not a verified 1977 rule
 export const fmt$ = (n: number) => n >= 1e6 ? `$${(n / 1e6).toFixed(2)}m` : `$${Math.round(n / 1000)}k`;
@@ -20,73 +24,16 @@ export function marketSalary(p: Player): number {
   if (a >= 32) s *= 0.8; if (a <= 22) s *= 0.9;
   return Math.round(clamp(s, 30000, 700000) / 5000) * 5000;
 }
-export function tradeValue(w: World, p: Player, forTeam: string): number {
-  const t = w.teams[forTeam];
-  const { now, fut } = clockWeights(t.clock);
-  const v = playerValue(p);
-  const age = p.age ?? 27;
-  const pot = age <= 25 ? Math.max(v, potentialOvr(p)) : v - Math.max(0, age - 29) * 1.8;
-  const base = now * v + fut * pot;
-  const surplus = p.contract ? (marketSalary(p) - p.contract.salary) / 40000 : 0;
-  const inj = p.injury && p.injury.daysLeft > 30 ? -3 : 0;
-  // convex: stars are worth far more than several role players
-  return Math.max(0, Math.pow(Math.max(0, base - 40), 1.75) / 6 + surplus + inj);
-}
-export function pickValue(w: World, season: number, round: number, original: string, forTeam: string): number {
-  const proj = projectedWins(w)[original] ?? 41;
-  const { fut } = clockWeights(w.teams[forTeam].clock);
-  const base = round === 1 ? 14 + (41 - proj) * 0.55 : round === 2 ? 4 : 0.6;
-  return Math.max(0.3, base * (0.6 + fut) * (season > w.season.year + 1 ? 0.85 : 1));
-}
-
-export interface TradeOffer { other: string; give: string[]; get: string[]; givePicks: { season: number; round: number; original: string }[]; getPicks: { season: number; round: number; original: string }[]; }
-
-export function evaluateTrade(w: World, offer: TradeOffer): { accept: boolean; margin: number; reason: string; legal: string | null } {
-  const user = w.meta.userTeam;
-  const U = w.teams[user], O = w.teams[offer.other];
-  // legality
-  if (w.season.phase === 'regular' && w.season.day > TRADE_DEADLINE(w.season.year)) return { accept: false, margin: 0, reason: 'The trade deadline has passed.', legal: 'deadline' };
-  if (w.season.phase === 'playoffs') return { accept: false, margin: 0, reason: 'No trades during the playoffs.', legal: 'playoffs' };
-  const uAfter = U.roster.length - offer.give.length + offer.get.length, oAfter = O.roster.length - offer.get.length + offer.give.length;
-  if (uAfter > 13 || oAfter > 13) return { accept: false, margin: 0, reason: 'That would leave a roster over the limit (12 + 1 temporary).', legal: 'roster' };
-  if (uAfter < 8 || oAfter < 8) return { accept: false, margin: 0, reason: 'That would leave a team with too few players.', legal: 'roster' };
-  if (!offer.give.length && !offer.givePicks.length) return { accept: false, margin: 0, reason: 'You need to offer something.', legal: 'empty' };
-  const theyGet = offer.give.reduce((s, id) => s + tradeValue(w, w.players[id], O.id), 0) + offer.givePicks.reduce((s, p) => s + pickValue(w, p.season, p.round, p.original, O.id), 0);
-  const theyGive = offer.get.reduce((s, id) => s + tradeValue(w, w.players[id], O.id), 0) + offer.getPicks.reduce((s, p) => s + pickValue(w, p.season, p.round, p.original, O.id), 0);
-  // payroll friction for the AI side (owner budget)
-  const dPay = offer.give.reduce((s, id) => s + (w.players[id].contract?.salary ?? 0), 0) - offer.get.reduce((s, id) => s + (w.players[id].contract?.salary ?? 0), 0);
-  const payPen = Math.max(0, payroll(w, O.id) + dPay - (O.payrollBudget ?? 1e9)) / 60000;
-  const friction = 1.5 + offer.give.length * 0.4; // AI GMs need a reason to change their roster
-  const margin = theyGet - theyGive - payPen - friction;
-  const rng = stream(w.meta.seed, 'negotiation', w.season.day, offer.other, offer.give.join(','), offer.get.join(','));
-  const accept = margin > 0 && rng.chance(sigmoid(margin * 0.6 + 0.8));
-  const gm = O.gm.split(' ').slice(-1)[0];
-  let reason: string;
-  if (accept) reason = `${gm}: "You've got a deal."`;
-  else if (margin > -3) reason = `${gm}: "Close, but not quite. Add a little more and we can talk."`;
-  else if (payPen > 2) reason = `${gm}: "Our owner won't take on that salary."`;
-  else reason = `${gm}: "That doesn't work for us."`;
-  return { accept, margin, reason, legal: null };
-}
+export { assetValue, pickValue, evaluateTrade, staffRead, aiMargin, tradeLegal, executeTradeBetween } from './trade';
+export type { TradeOffer, PickRef, TradeReply } from './trade';
 
 export function executeTrade(w: World, offer: TradeOffer) {
-  const user = w.meta.userTeam;
-  const U = w.teams[user], O = w.teams[offer.other];
-  for (const id of offer.give) { U.roster = U.roster.filter(x => x !== id); O.roster.push(id); w.players[id].team = O.id; }
-  for (const id of offer.get) { O.roster = O.roster.filter(x => x !== id); U.roster.push(id); w.players[id].team = user; }
-  const movePick = (from: Team, to: Team, pk: { season: number; round: number; original: string }) => {
-    const p = from.picks.find(x => x.season === pk.season && x.round === pk.round && x.original === pk.original);
-    if (p) { from.picks = from.picks.filter(x => x !== p); to.picks.push({ ...p, owner: to.id }); }
-  };
-  offer.givePicks.forEach(pk => movePick(U, O, pk));
-  offer.getPicks.forEach(pk => movePick(O, U, pk));
-  const desc = `${U.abbr} trade ${[...offer.give.map(id => w.players[id].name), ...offer.givePicks.map(p => `${p.season} R${p.round} (${p.original})`)].join(', ') || 'nothing'} to ${O.abbr} for ${[...offer.get.map(id => w.players[id].name), ...offer.getPicks.map(p => `${p.season} R${p.round} (${p.original})`)].join(', ') || 'nothing'}`;
-  w.tradeHistory.unshift({ date: w.season.day, text: desc });
-  addEvent(w, 'trade', desc, [...offer.give, ...offer.get]);
-  addNews(w, 'Trade', desc + '.', 'transactions');
-  // incumbent reaction / coach trust: trading away a coach's starter without his input dents trust a little
-  const coach = w.coaches[U.coach];
+  const desc = executeTradeBetween(w, w.meta.userTeam, offer.other, offer.give, offer.get, offer.givePicks, offer.getPicks);
+  // trading away a coach's best players without his input dents trust a little
+  const coach = w.coaches[w.teams[w.meta.userTeam].coach];
   if (offer.give.some(id => playerValue(w.players[id]) > 66)) coach.trustGM = clamp((coach.trustGM ?? 55) - 3, 0, 100);
+  checkCoachRequest(w);
+  return desc;
 }
 
 // ------------------------------------------------------------------ signing / release / extension
@@ -117,6 +64,7 @@ export function signPlayer(w: World, pid: string, tid: string, salary: number, y
   p.contract = { salary, years, known: null, provenance: 'Signed in this save (simulated)', signed: w.season.day };
   p.rosterStatus = 'Signed';
   addEvent(w, 'signing', `${tid} signed ${p.name} (${fmt$(salary)} × ${years})`, [pid]);
+  if (tid === w.meta.userTeam) checkCoachRequest(w);
   if (playerValue(p) > 58) addNews(w, `${w.teams[tid].name} sign ${p.name}`, `${years}-year deal, terms ${fmt$(salary)}/yr (simulated).`, 'transactions');
 }
 
@@ -199,47 +147,17 @@ export function aiDailyMoves(w: World) {
     }
   }
   // AI trade proposal to the user, roughly every 3 weeks, before the deadline
-  if (w.season.phase === 'regular' && w.season.day <= TRADE_DEADLINE(w.season.year) && rng.chance(0.05)) aiProposeTrade(w, rng);
-}
-
-function aiProposeTrade(w: World, rng: ReturnType<typeof stream>) {
-  const user = w.teams[w.meta.userTeam];
-  const others = Object.values(w.teams).filter(t => t.id !== user.id);
-  const O = others[Math.floor(rng.next() * others.length)];
-  // they want one of the user's players that fits their clock; they offer value they rate slightly lower
-  const targets = user.roster.map(id => w.players[id]).filter(p => !p.injury).sort((a, b) => tradeValue(w, b, O.id) - tradeValue(w, a, O.id)).slice(1, 6);
-  if (!targets.length) return;
-  const want = targets[Math.floor(rng.next() * targets.length)];
-  const wv = tradeValue(w, want, O.id);
-  const theirs = O.roster.map(id => w.players[id]).filter(p => !p.injury).sort((a, b) => tradeValue(w, b, O.id) - tradeValue(w, a, O.id));
-  let offerP = theirs.find(p => { const v = tradeValue(w, p, O.id); return v < wv * 0.95 && v > wv * 0.55; });
-  if (!offerP) return;
-  const ask = `${O.gm} (${O.city}) is offering ${offerP.name} for ${want.name}.`;
-  addMessage(w, { date: w.season.day, from: O.gm, role: 'GM', subject: `Trade offer: ${offerP.name} for ${want.name}`, body: ask + ` Your scouts' view: ${offerP.name} (${offerP.pos}, ${offerP.age}) — ${fmt$(offerP.contract?.salary ?? 0)} × ${offerP.contract?.years ?? 1}. Offer expires in a few days.`,
-    urgent: 2, tag: 'Trade', deadline: new Date(dayNum(w.season.day) * 86400000 + 4 * 86400000).toISOString().slice(0, 10),
-    actions: [{ label: 'Accept trade', cmd: 'acceptAiTrade', arg: { other: O.id, give: [want.id], get: [offerP.id] } }, { label: 'Open in trade finder', cmd: 'goto', arg: 'trade' }, { label: 'Decline', cmd: 'dismiss' }] });
-}
-
-export function coachNeed(w: World): { need: string; detail: string } {
-  const team = w.teams[w.meta.userTeam];
-  const ps = team.roster.map(id => w.players[id]);
-  const all = Object.values(w.teams).flatMap(t => t.roster.map(id => w.players[id]));
-  const avg = (arr: Player[], f: (p: Player) => number) => arr.reduce((s, p) => s + f(p), 0) / Math.max(1, arr.length);
-  const top = (arr: Player[], f: (p: Player) => number, n: number) => [...arr].sort((a, b) => f(b) - f(a)).slice(0, n);
-  const dims: { key: string; need: string; detail: string; f: (p: Player) => number; n: number }[] = [
-    { key: 'rim', need: 'a rim protector', detail: 'We give up too much at the basket.', f: p => p.r.intD * 0.6 + p.r.blk * 0.4, n: 2 },
-    { key: 'wing', need: 'a defensive forward', detail: 'Thin on wing defense behind the starters.', f: p => p.r.perD, n: 4 },
-    { key: 'reb', need: 'a rebounder', detail: 'We are losing the glass.', f: p => p.r.dreb * 0.6 + p.r.oreb * 0.4, n: 3 },
-    { key: 'pg', need: 'a steady ballhandler', detail: 'Too many turnovers when our guards sit.', f: p => p.r.handle * 0.5 + p.r.pass * 0.5, n: 2 },
-    { key: 'score', need: 'more scoring off the bench', detail: 'The second unit can\'t score.', f: p => p.r.mid * 0.5 + p.r.ins * 0.5, n: 7 },
-  ];
-  let worst = dims[0], wz = 1e9;
-  for (const d of dims) {
-    const mine = avg(top(ps, d.f, d.n), d.f), league = avg(top(all.filter(Boolean), d.f, d.n * 22), d.f);
-    const zz = mine - league;
-    if (zz < wz) { wz = zz; worst = d; }
+  if (w.season.phase === 'regular' && w.season.day <= TRADE_DEADLINE(w.season.year)) {
+    if (rng.chance(0.07)) aiProposeTrade(w);
+    if (rng.chance(0.06)) aiAiTrades(w);
   }
-  return { need: worst.need, detail: worst.detail };
+}
+
+/** What the coach currently wants (open request first, else the weakest area). */
+export function coachNeed(w: World): { need: string; detail: string; key: string } {
+  const r = openRequest(w);
+  const d = r ? needDef(r.key) : worstNeed(w);
+  return { need: d.need, detail: d.detail, key: d.key };
 }
 
 export function generateDailyMessages(w: World) {
@@ -249,11 +167,11 @@ export function generateDailyMessages(w: World) {
   const rng = stream(w.meta.seed, 'messages', S.day);
   // expire old offers
   for (const m of w.messages) if (!m.resolved && m.deadline && m.deadline < S.day) { m.resolved = true; }
-  // coach acquisition request every ~5 weeks (data-driven need)
-  if (d > 0 && d % 35 === 7) {
-    const n = coachNeed(w);
-    addMessage(w, { date: S.day, from: coach.name, role: 'Coach', subject: `${coach.name.split(' ').slice(-1)[0]} wants ${n.need}`, body: `${n.detail} He'd like ${n.need} before the trade deadline. This is a request, not a demand — but he'll remember whether we listened.`,
-      urgent: 2, tag: 'Coach request', deadline: TRADE_DEADLINE(S.year), actions: [{ label: 'Open trade finder', cmd: 'goto', arg: 'trade' }, { label: 'Discuss', cmd: 'coachDiscuss' }, { label: 'Not now', cmd: 'dismiss' }] });
+  // coach acquisition request every ~5 weeks (measurable, with a target)
+  checkCoachRequest(w);
+  if (d > 0 && d % 35 === 7 && !openRequest(w)) {
+    const dl = S.day <= TRADE_DEADLINE(S.year) ? TRADE_DEADLINE(S.year) : addD(S.day, 30);
+    makeCoachRequest(w, dl);
   }
   // owner check-in monthly
   if (d > 0 && d % 30 === 15) {
@@ -261,6 +179,12 @@ export function generateDailyMessages(w: World) {
     const exp = w.owner.expectedWins;
     w.owner.satisfaction = clamp(w.owner.satisfaction + (pace - exp) * 0.4, 0, 100);
     const tone = pace >= exp + 4 ? 'I like what I\'m seeing.' : pace >= exp - 3 ? 'We\'re roughly where I expected.' : 'This is below what I expected.';
+    if (w.meta.mode === 'career' && !w.meta.fired && d > 60 && w.owner.satisfaction < 8 && w.owner.patience < 60) {
+      w.meta.fired = true;
+      openJobMarket(w);
+      addMessage(w, { date: S.day, from: w.owner.name, role: 'Owner', subject: 'You have been fired', body: `On pace for ${Math.round(pace)} wins against the ${exp} I expected. I'm making a change at general manager, effective today.`, urgent: 3, tag: 'Owner', actions: [{ label: 'Find a new job', cmd: 'jobs' }, { label: 'Continue here in sandbox mode', cmd: 'sandbox' }] });
+      return;
+    }
     addMessage(w, { date: S.day, from: w.owner.name, role: 'Owner', subject: `Owner check-in: on pace for ${Math.round(pace)} wins`, body: `${tone} I expected about ${exp} wins. ${w.owner.objective}`, urgent: pace < exp - 6 ? 2 : 1, tag: 'Owner', actions: [{ label: 'Acknowledge', cmd: 'dismiss' }] });
   }
   // trade deadline warning
@@ -313,10 +237,11 @@ export function ownerSeasonReview(w: World) {
   let body = `We won ${team.w} games against an expectation of about ${exp}. `;
   body += s >= 70 ? 'I\'m very pleased. Keep building.' : s >= 45 ? 'Acceptable, but I expect progress next season.' : s >= 25 ? 'That was a disappointing year. Consider this a warning.' : 'This isn\'t working.';
   w.gmRep = clamp(w.gmRep + delta * 0.5 + (champion ? 10 : 0), 0, 100);
-  if (w.meta.mode === 'career' && s < 18 && w.owner.patience < 60) {
+  if (w.meta.mode === 'career' && s < 24 && w.owner.patience < 66) {
     w.meta.fired = true;
+    openJobMarket(w);
     body += ' I\'m making a change at general manager.';
-    addMessage(w, { date: w.season.day, from: w.owner.name, role: 'Owner', subject: 'You have been fired', body, urgent: 3, tag: 'Owner', actions: [{ label: 'Continue in sandbox mode', cmd: 'sandbox' }] });
+    addMessage(w, { date: w.season.day, from: w.owner.name, role: 'Owner', subject: 'You have been fired', body, urgent: 3, tag: 'Owner', actions: [{ label: 'Find a new job', cmd: 'jobs' }, { label: 'Continue here in sandbox mode', cmd: 'sandbox' }] });
   } else addMessage(w, { date: w.season.day, from: w.owner.name, role: 'Owner', subject: 'End-of-season review', body, urgent: 1, tag: 'Owner' });
 }
 

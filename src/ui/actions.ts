@@ -49,7 +49,10 @@ export function tidyMessages(w: World) {
     if (m.tag === 'Scouting' && m.urgent === 0 && age(m.date) > 20) m.resolved = true;
     if (m.subject.includes('Trade offer') && w.season.phase !== 'regular') m.resolved = true;
     if (age(m.date) > 120) m.resolved = true;
+    if (m.tag === 'Coach request' && w.season.phase !== 'regular') m.resolved = true;
   }
+  const req = (w as any).coachRequest;
+  if (req && req.status === 'open' && w.season.phase !== 'regular') req.status = 'expired';
 }
 const urgentCount = (w: World) => w.messages.filter(m => !m.resolved && m.urgent >= 3).length;
 
@@ -185,6 +188,7 @@ export function runCommand(m: Message, a: { label: string; cmd: string; arg?: an
     case 'goto': {
       m.read = true;
       if (a.arg === 'trade') { go('office', 'trade'); }
+      else if (a.arg === 'fa') go('office', 'fa');
       else if (a.arg === 'draft') go('draft');
       else if (a.arg === 'office') go('office', 'contracts');
       else go(a.arg);
@@ -197,8 +201,10 @@ export function runCommand(m: Message, a: { label: string; cmd: string; arg?: an
       if (p.team === w.meta.userTeam) { releasePlayer(w, p.id); p.rosterStatus = `Free agent (was ${w.teams[w.meta.userTeam].abbr})`; }
       resolve(); toast(`${p.name} will test free agency.`); break;
     }
+    case 'jobs': { m.read = true; openModal('jobs'); commit(); return; }
+    case 'tradeFinder': { m.read = true; setUI({ tradeDraft: { givePicks: [], getPicks: [], ...a.arg } }); go('office', 'trade'); commit(); return; }
     case 'acceptAiTrade': {
-      const offer = { other: a.arg.other, give: a.arg.give, get: a.arg.get, givePicks: [], getPicks: [] };
+      const offer = { givePicks: [], getPicks: [], ...a.arg };
       const stillValid = offer.give.every((id: string) => w.players[id].team === w.meta.userTeam) && offer.get.every((id: string) => w.players[id].team === offer.other);
       if (!stillValid || (w.season.phase === 'regular' && w.season.day > TRADE_DEADLINE(w.season.year))) { toast('That offer is no longer on the table.'); resolve(); break; }
       const ev = evaluateTrade(w, offer);

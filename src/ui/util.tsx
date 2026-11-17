@@ -40,7 +40,7 @@ export function Btn({ children, onClick, kind = '', disabled, auto, title, class
 
 export function Tabs({ id, tabs, def }: { id: string; tabs: { id: string; label: string }[]; def: string }) {
   const cur = ui.tab[id] ?? def;
-  return <div class="tabs">{tabs.map(t => <button data-nav class={`tab ${cur === t.id ? 'on' : ''}`} onClick={() => setUI({ tab: { ...ui.tab, [id]: t.id } })}>{t.label}</button>)}</div>;
+  return <div class="tabs">{tabs.map(t => <button data-nav class={`tab ${cur === t.id ? 'on' : ''}`} onClick={() => setUI({ tab: { ...ui.tab, [id]: t.id } })}><span>{t.label}</span></button>)}</div>;
 }
 export const curTab = (id: string, def: string) => ui.tab[id] ?? def;
 
@@ -76,3 +76,33 @@ export function injuryChip(p: Player) {
 }
 
 export function Empty({ children }: { children: ComponentChildren }) { return <div class="empty">{children}</div>; }
+
+// ------------------------------------------------------------------ player tile (whole tile opens the player page)
+export function PlayerTile({ p, size = 40, sub, onClick, class: cls = '', right }: { p: Player; size?: number; sub?: ComponentChildren; onClick?: () => void; class?: string; right?: ComponentChildren }) {
+  return <button data-nav class={`ptile ${cls}`} onClick={(e: any) => { e.stopPropagation(); onClick ? onClick() : openPlayer(p.id); }}>
+    <Headshot p={p} size={size} />
+    <span class="ptile-t"><b>{p.name}</b>{sub !== undefined ? <small>{sub}</small> : <small>{p.pos} · {p.age ?? '—'} yrs</small>}</span>
+    {right}
+  </button>;
+}
+export function openPlayer(id: string) { ui.modal = { kind: 'player', arg: { id } }; setUI({}); }
+
+/** Condition: how fresh a player's legs are today (back-to-backs and heavy minutes drain it). */
+export function condWord(c: number) { return c >= 88 ? 'Fresh' : c >= 72 ? 'OK' : c >= 55 ? 'Tired' : 'Exhausted'; }
+export function CondBar({ p }: { p: Player }) {
+  const c = Math.round(p.cond ?? 100);
+  return <span class={`cond c${c >= 88 ? 4 : c >= 72 ? 3 : c >= 55 ? 2 : 1}`} title={`Condition ${c}`}><i style={{ width: `${c}%` }} /><em>{condWord(c)}</em></span>;
+}
+
+// ------------------------------------------------------------------ sortable table
+export interface Col<T> { key: string; label: string; get?: (r: T) => number | string; render: (r: T) => ComponentChildren; cls?: string; title?: string; desc?: boolean }
+export function SortTable<T>({ id, rows, cols, onRow, rowCls, def }: { id: string; rows: T[]; cols: Col<T>[]; onRow?: (r: T) => void; rowCls?: (r: T) => string; def?: string }) {
+  const state = ui.tab[`sort:${id}`] ?? def ?? '';
+  const [sk, sd] = state.split(':');
+  const col = cols.find(c => c.key === sk && c.get);
+  const sorted = col ? [...rows].sort((a, b) => { const x = col.get!(a), y = col.get!(b); const r = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y)); return sd === 'd' ? -r : r; }) : rows;
+  const click = (c: Col<T>) => { if (!c.get) return; const dir = sk === c.key ? (sd === 'd' ? 'a' : 'd') : (c.desc === false ? 'a' : 'd'); setUI({ tab: { ...ui.tab, [`sort:${id}`]: `${c.key}:${dir}` } }); };
+  return <table class="tbl rows sortable"><thead><tr>{cols.map(c => <th class={`${c.cls ?? ''} ${c.get ? 'can' : ''} ${sk === c.key ? 'on' : ''}`} title={c.title}>
+    {c.get ? <button data-nav class="th-b" onClick={() => click(c)}>{c.label}{sk === c.key && <span class="arrow">{sd === 'd' ? '▼' : '▲'}</span>}</button> : c.label}</th>)}</tr></thead>
+    <tbody>{sorted.map(r => <tr class={rowCls?.(r) ?? ''} onClick={() => onRow?.(r)}>{cols.map(c => <td class={c.cls ?? ''}>{c.render(r)}</td>)}</tr>)}</tbody></table>;
+}
