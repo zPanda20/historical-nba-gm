@@ -4,9 +4,9 @@ import { installHoverFocus, isTyping, moveSelection, focusFirst } from './nav';
 import { teamTheme } from './theme';
 import { openMostUrgent } from './actions';
 import { Title, NewGame } from './Title';
-import { TopBar, NavRail, DeviceSlot, toggleFullscreen } from './Chrome';
-import { Home } from './screens/Home';
-import { Rafters } from './screens/Rafters';
+import { TopBar, NavRail, UrgentSlot, toggleFullscreen } from './Chrome';
+import { Home, CourtsideBg } from './screens/Home';
+import { Rafters, RaftersBg } from './screens/Rafters';
 import { Roster } from './screens/Roster';
 import { Staff } from './screens/Staff';
 import { Office } from './screens/Office';
@@ -97,21 +97,22 @@ export function App() {
       {u.mode === 'title' && <Title />}
       {u.mode === 'newgame' && <NewGame />}
       {u.mode === 'game' && world && <>
-        <div class="bg" />
+        {u.rafters ? <RaftersBg /> : u.screen === 'home' && !world.meta.fired ? <CourtsideBg w={world} /> : <div class="bg" />}
         <TopBar />
         <NavRail />
-        <main class={`main scr-${u.screen}`}>
-          {u.screen === 'home' && <Home />}
-          {u.screen === 'roster' && <Roster />}
-          {u.screen === 'staff' && <Staff />}
-          {u.screen === 'office' && <Office />}
-          {u.screen === 'draft' && <Draft />}
-          {u.screen === 'league' && <League />}
-          {u.screen === 'games' && <Games />}
-          {u.screen === 'people' && <People />}
+        <UrgentSlot />
+        <main class={`main ${u.rafters ? 'scr-rafters' : `scr-${u.screen}`}`}>
+          {u.rafters ? <Rafters /> : <>
+            {u.screen === 'home' && <Home />}
+            {u.screen === 'roster' && <Roster />}
+            {u.screen === 'staff' && <Staff />}
+            {u.screen === 'office' && <Office />}
+            {u.screen === 'draft' && <Draft />}
+            {u.screen === 'league' && <League />}
+            {u.screen === 'games' && <Games />}
+            {u.screen === 'people' && <People />}
+          </>}
         </main>
-        <DeviceSlot />
-        {u.rafters && <Rafters />}
         {u.gamecast && <Gamecast id={u.gamecast} />}
         {u.settings && <Settings />}
         {u.modal && <Modals />}

@@ -179,12 +179,6 @@ export function generateDailyMessages(w: World) {
     const exp = w.owner.expectedWins;
     w.owner.satisfaction = clamp(w.owner.satisfaction + (pace - exp) * 0.4, 0, 100);
     const tone = pace >= exp + 4 ? 'I like what I\'m seeing.' : pace >= exp - 3 ? 'We\'re roughly where I expected.' : 'This is below what I expected.';
-    if (w.meta.mode === 'career' && !w.meta.fired && d > 60 && w.owner.satisfaction < 8 && w.owner.patience < 60) {
-      w.meta.fired = true;
-      openJobMarket(w);
-      addMessage(w, { date: S.day, from: w.owner.name, role: 'Owner', subject: 'You have been fired', body: `On pace for ${Math.round(pace)} wins against the ${exp} I expected. I'm making a change at general manager, effective today.`, urgent: 3, tag: 'Owner', actions: [{ label: 'Find a new job', cmd: 'jobs' }, { label: 'Continue here in sandbox mode', cmd: 'sandbox' }] });
-      return;
-    }
     addMessage(w, { date: S.day, from: w.owner.name, role: 'Owner', subject: `Owner check-in: on pace for ${Math.round(pace)} wins`, body: `${tone} I expected about ${exp} wins. ${w.owner.objective}`, urgent: pace < exp - 6 ? 2 : 1, tag: 'Owner', actions: [{ label: 'Acknowledge', cmd: 'dismiss' }] });
   }
   // trade deadline warning
@@ -237,7 +231,7 @@ export function ownerSeasonReview(w: World) {
   let body = `We won ${team.w} games against an expectation of about ${exp}. `;
   body += s >= 70 ? 'I\'m very pleased. Keep building.' : s >= 45 ? 'Acceptable, but I expect progress next season.' : s >= 25 ? 'That was a disappointing year. Consider this a warning.' : 'This isn\'t working.';
   w.gmRep = clamp(w.gmRep + delta * 0.5 + (champion ? 10 : 0), 0, 100);
-  if (w.meta.mode === 'career' && s < 24 && w.owner.patience < 66) {
+  if (w.meta.mode === 'career' && s < 18 && w.owner.patience < 60) {
     w.meta.fired = true;
     openJobMarket(w);
     body += ' I\'m making a change at general manager.';

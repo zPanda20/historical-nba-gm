@@ -242,3 +242,23 @@ export function openMostUrgent() {
   commit(false);
 }
 export { nextUnplayedDate, ui };
+
+/** What ADVANCE does right now, and how the top bar describes it. */
+export function nextStop(w: World): { label: string; verb: string; run?: () => void } {
+  const S = w.season, u = w.meta.userTeam;
+  if (w.meta.fired) return { label: 'Find a new job', verb: 'Phones', run: () => openModal('jobs') };
+  const D3 = (d: string) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(d + 'T12:00:00Z').getUTCDay()];
+  if (S.phase === 'preseason' || S.phase === 'regular') {
+    const g = nextUserGame(w);
+    if (!g) return { label: 'Playoffs', verb: 'Advance', run: () => sim('day') };
+    const opp = w.teams[g.home === u ? g.away : g.home];
+    return { label: `${D3(g.date)} · ${g.home === u ? 'vs' : 'at'} ${opp.name}`, verb: S.phase === 'preseason' ? 'Tip off' : 'Advance', run: () => sim(S.phase === 'preseason' ? 'day' : 'game') };
+  }
+  if (S.phase === 'playoffs') {
+    const alive = S.playoffs!.series.some(s => (s.hi === u || s.lo === u) && !s.winner) || (S.playoffs!.round === 1 && ['East', 'West'].some(c => ((S as any)[`seeds${c}`] as string[]).slice(0, 2).includes(u)));
+    return alive ? { label: 'Playoffs · next day', verb: 'Advance', run: () => sim('day') } : { label: 'Rest of the playoffs', verb: 'Advance', run: () => sim('playoffs') };
+  }
+  if (S.phase === 'draft') return { label: `${S.year + 1} NBA Draft`, verb: 'Draft room', run: () => go('draft') };
+  const probs = seasonStartProblems(w);
+  return probs.length ? { label: probs[0], verb: 'Fix roster', run: () => go('office', 'contracts') } : { label: `Open ${S.year + 1}–${String(S.year + 2).slice(2)}`, verb: 'Advance', run: () => beginNextSeason() };
+}

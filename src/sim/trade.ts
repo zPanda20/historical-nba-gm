@@ -10,6 +10,37 @@ import { staffSd, unitErr } from './needs';
 export interface PickRef { season: number; round: number; original: string }
 export interface TradeOffer { other: string; give: string[]; get: string[]; givePicks: PickRef[]; getPicks: PickRef[]; }
 
+// ------------------------------------------------------------------ GM personalities and patience
+export interface GmProfile { max: number; regen: number; tough: number; style: string }
+/** Every GM is different: how much haggling he tolerates, how fast he cools off, how hard he bargains. */
+export function gmProfile(w: World, tid: string): GmProfile {
+  const r = stream(w.meta.seed, 'gmprofile', tid);
+  const max = Math.round(50 + r.next() * 50), regen = Math.round(7 + r.next() * 17), tough = Math.round((0.82 + r.next() * 0.45) * 100) / 100;
+  const style = tough > 1.12 ? (max < 70 ? 'Hard-nosed and short-fused' : 'Hard-nosed but patient') : max < 65 ? 'Quick to hang up' : regen > 18 ? 'Easygoing' : 'Even-tempered';
+  return { max, regen, tough, style };
+}
+interface PatienceState { cur: number; day: string; closedUntil?: string; lastSig?: string }
+const dayN = (d: string) => Math.floor(new Date(d + 'T12:00:00Z').getTime() / 86400000);
+/** Current patience (regenerates by the day). */
+export function patience(w: World, tid: string): PatienceState & { max: number } {
+  const P = ((w as any).gmPatience ??= {}) as Record<string, PatienceState>;
+  const prof = gmProfile(w, tid);
+  const st = P[tid] ??= { cur: prof.max, day: w.season.day };
+  const days = dayN(w.season.day) - dayN(st.day);
+  if (days > 0) { st.cur = Math.min(prof.max, st.cur + days * prof.regen); st.day = w.season.day; }
+  if (st.closedUntil && w.season.day >= st.closedUntil) st.closedUntil = undefined;
+  return Object.assign(st, { max: prof.max }) as any;
+}
+export function phoneOpen(w: World, tid: string): { open: boolean; text?: string } {
+  const st = patience(w, tid);
+  const gm = w.teams[tid].gm.split(' ').slice(-1)[0];
+  if (st.closedUntil) {
+    const deadlineDay = w.season.phase === 'regular' && w.season.day === TRADE_DEADLINE(w.season.year);
+    return { open: false, text: deadlineDay ? `${gm}'s line is closed for the rest of the day.` : `${gm} isn't taking your calls. Try again around ${st.closedUntil}.` };
+  }
+  return { open: true };
+}
+
 const conv = (b: number) => Math.pow(Math.max(0, b - 40), 2.1) / 10;
 const group = (p: Player) => (p.pos === 'PG' || p.pos === 'SG' ? 'G' : p.pos === 'SF' ? 'W' : 'B');
 const SLOTS: Record<string, number> = { G: 3.5, W: 2, B: 3.5 };
@@ -94,42 +125,66 @@ export function aiMargin(w: World, offer: TradeOffer) {
   const { getV, giveV } = sideValue(w, O.id, offer.get, offer.give, offer.getPicks, offer.givePicks);
   const dPay = offer.give.reduce((s, id) => s + (w.players[id].contract?.salary ?? 0), 0) - offer.get.reduce((s, id) => s + (w.players[id].contract?.salary ?? 0), 0);
   const payPen = Math.max(0, payroll(w, O.id) + dPay - (O.payrollBudget ?? 1e9)) / 40000;
-  const friction = 2 + giveV * 0.06;
+  const friction = (2 + giveV * 0.06) * gmProfile(w, O.id).tough;
   return { margin: getV - giveV - payPen - friction, getV, giveV, payPen };
 }
 
-export interface TradeReply { accept: boolean; margin: number; reason: string; legal: string | null; counter?: { give?: string; givePick?: PickRef; label: string } }
+export interface TradeReply { accept: boolean; margin: number; reason: string; legal: string | null; closed?: boolean; counter?: { give?: string; givePick?: PickRef; drop?: string; label: string } }
 
 export function evaluateTrade(w: World, offer: TradeOffer): TradeReply {
   const legal = tradeLegal(w, offer);
   if (legal) return { accept: false, margin: 0, reason: legal, legal };
   const O = w.teams[offer.other];
   const gm = O.gm.split(' ').slice(-1)[0];
+  const phone = phoneOpen(w, O.id);
+  if (!phone.open) return { accept: false, margin: 0, reason: phone.text!, legal: null, closed: true };
+  const st = patience(w, O.id);
+  const prof = gmProfile(w, O.id);
   const { margin, giveV, payPen } = aiMargin(w, offer);
   const scale = Math.max(10, giveV);
-  const rng = stream(w.meta.seed, 'negotiation', w.season.day, offer.other, offer.give.join(','), offer.get.join(','), offer.givePicks.length, offer.getPicks.length);
-  const accept = margin > 0 && rng.chance(sigmoid((margin / scale) * 7 + 0.9));
-  if (accept) return { accept, margin, reason: `${gm}: "You've got a deal."`, legal: null };
-  // close? look for the smallest extra piece that gets it done
-  if (margin > -0.45 * scale) {
+  const rel = margin / scale;
+  const sig = [offer.give, offer.get, offer.givePicks.map(p => p.season + '' + p.round + p.original), offer.getPicks.map(p => p.season + '' + p.round + p.original)].map(x => [...x].sort().join(',')).join('|');
+  const rng = stream(w.meta.seed, 'negotiation', w.season.day, offer.other, sig, Math.round(st.cur));
+  const accept = margin > 0 && rng.chance(sigmoid(rel * 7 + 0.9 + (st.cur / prof.max - 0.5)));
+  if (accept) { st.lastSig = sig; return { accept, margin, reason: `${gm}: "You've got a deal."`, legal: null }; }
+  // every call costs patience — insulting or repeated offers cost a lot more
+  const cost = 6 + clamp(-rel * 45, 0, 40) + (st.lastSig === sig ? 14 : 0);
+  st.cur -= cost; st.lastSig = sig;
+  const deadlineDay = w.season.phase === 'regular' && w.season.day === TRADE_DEADLINE(w.season.year);
+  if (st.cur <= 0) {
+    st.cur = Math.max(st.cur, -20);
+    const back = deadlineDay ? addD(w.season.day, 1) : addD(w.season.day, Math.max(2, Math.ceil((prof.max * 0.4 - st.cur) / prof.regen)));
+    st.closedUntil = back;
+    return { accept: false, margin, legal: null, closed: true, reason: deadlineDay ? `${gm}: "We're done for today." (He won't take your calls again before the deadline passes.)` : `${gm}: "I've heard enough. Call me in a few days." (Line closed until ${back}.)` };
+  }
+  const mood = st.cur / prof.max;
+  const tone = (calm: string, short: string) => mood > 0.45 ? calm : short;
+  // close? propose the smallest change that gets it done: add one of yours, or take one of theirs off the table
+  if (rel > -0.45) {
     const U = w.teams[w.meta.userTeam];
-    const opts: { give?: string; givePick?: PickRef; label: string; m: number }[] = [];
+    const opts: { give?: string; givePick?: PickRef; drop?: string; label: string; m: number }[] = [];
+    const ok = (o: TradeOffer) => !tradeLegal(w, o);
     for (const id of U.roster) if (!offer.give.includes(id)) {
-      const m = aiMargin(w, { ...offer, give: [...offer.give, id] }).margin;
-      if (m > 0.08 * scale && !tradeLegal(w, { ...offer, give: [...offer.give, id] })) opts.push({ give: id, label: w.players[id].name, m });
+      const o = { ...offer, give: [...offer.give, id] }; const m = aiMargin(w, o).margin;
+      if (m > 0.08 * scale && ok(o)) opts.push({ give: id, label: `add ${w.players[id].name}`, m });
     }
     for (const pk of U.picks.filter(p => p.season > w.season.year && p.round <= 2)) {
       const ref = { season: pk.season, round: pk.round, original: pk.original };
       if (offer.givePicks.some(x => x.season === ref.season && x.round === ref.round && x.original === ref.original)) continue;
-      const m = aiMargin(w, { ...offer, givePicks: [...offer.givePicks, ref] }).margin;
-      if (m > 0.08 * scale) opts.push({ givePick: ref, label: `your ${ref.season} round ${ref.round} pick${ref.original !== U.id ? ` (from ${ref.original})` : ''}`, m });
+      const o = { ...offer, givePicks: [...offer.givePicks, ref] }; const m = aiMargin(w, o).margin;
+      if (m > 0.08 * scale) opts.push({ givePick: ref, label: `add your ${ref.season} ${ref.round === 1 ? '1st' : '2nd'}-round pick${ref.original !== U.id ? ` (from ${ref.original})` : ''}`, m });
     }
+    if (offer.get.length > 1 || offer.getPicks.length) for (const id of offer.get) {
+      const o = { ...offer, get: offer.get.filter(x => x !== id) }; const m = aiMargin(w, o).margin;
+      if (m > 0.08 * scale && ok(o)) opts.push({ drop: id, label: `leave ${w.players[id].name} out of it`, m });
+    }
+    // prefer the change that leaves them only a little ahead (they still want to win the deal)
     const best = opts.sort((a, b) => a.m - b.m)[0];
-    if (best) return { accept: false, margin, legal: null, reason: `${gm}: "Close. Add ${best.label} and we have a deal."`, counter: { give: best.give, givePick: best.givePick, label: best.label } };
-    return { accept: false, margin, legal: null, reason: `${gm}: "Close, but I don't see the piece that gets it done."` };
+    if (best) return { accept: false, margin, legal: null, reason: `${gm}: "${tone('Close. ', 'Look — ')}${best.label[0].toUpperCase() + best.label.slice(1)} and we have a deal."`, counter: { give: best.give, givePick: best.givePick, drop: best.drop, label: best.label } };
+    return { accept: false, margin, legal: null, reason: `${gm}: "${tone("We're close, but I don't see the piece that gets it done.", "Close isn't good enough. Bring me something real.")}"` };
   }
   if (payPen > 2) return { accept: false, margin, legal: null, reason: `${gm}: "Our owner won't take on that salary."` };
-  return { accept: false, margin, legal: null, reason: margin < -1.2 * scale ? `${gm}: "Is this a joke? No."` : `${gm}: "That doesn't work for us."` };
+  return { accept: false, margin, legal: null, reason: rel < -1.2 ? `${gm}: "${tone('Is this a joke? No.', "Don't waste my time.")}"` : `${gm}: "${tone("That doesn't work for us.", "No. And my patience is running thin.")}"` };
 }
 
 /** Our staff's read of a deal: point estimate, uncertainty band, and a guess at the other side's appetite. */

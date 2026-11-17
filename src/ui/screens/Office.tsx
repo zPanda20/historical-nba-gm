@@ -3,6 +3,7 @@ import { useStore, openModal, commit, toast, ui, setUI } from '../store';
 import { place, Panel, Btn, Tabs, curTab, Logo, OvrBadge, Chip, Meter, dateShort, injuryChip, PlayerTile, SortTable, seenOvr } from '../util';
 import { rightsOk, evaluateTrade, executeTrade, fmt$, payroll, marketSalary, tradeLegal } from '../../sim/gm';
 import type { TradeReply } from '../../sim/gm';
+import { gmProfile, patience, phoneOpen } from '../../sim/trade';
 import { openRequest, needDef, seenRating } from '../../sim/needs';
 import { TradeCard, ReqPanel } from '../deal';
 import { playerValue } from '../../sim/coach';
@@ -33,7 +34,7 @@ function TradeFinder({ w }: { w: World }) {
   };
   const takeCounter = () => {
     const c = reply!.counter!;
-    const offer = { ...d, give: c.give ? [...d.give, c.give] : d.give, givePicks: c.givePick ? [...d.givePicks, c.givePick] : d.givePicks };
+    const offer = { ...d, give: c.give ? [...d.give, c.give] : d.give, givePicks: c.givePick ? [...d.givePicks, c.givePick] : d.givePicks, get: c.drop ? d.get.filter((x: string) => x !== c.drop) : d.get };
     done(offer);
   };
   const PRow = ({ p, side }: { p: Player; side: 'give' | 'get' }) => <div class={`tr-p ${d[side].includes(p.id) ? 'on' : ''}`}>
@@ -47,7 +48,8 @@ function TradeFinder({ w }: { w: World }) {
       {U.roster.map(id => w.players[id]).sort((a, b) => playerValue(b) - playerValue(a)).map(p => <PRow p={p} side="give" />)}
       <div class="tr-picks">{picks(u).map(p => <button data-nav class={`pk ${d.givePicks.some((x: PK) => pkKey(x) === pkKey(p)) ? 'on' : ''}`} onClick={() => toggleP('givePicks', p)}>{p.season} {p.round === 1 ? '1st' : '2nd'}{p.original !== u ? ` (${p.original})` : ''}</button>)}</div>
     </Panel>
-    <Panel title={<><Logo t={O} size={26} /> {O.city} {O.name}</>} right={<span class="muted">GM {O.gm} · {O.clock}</span>} class="tr-col">
+    <Panel title={<><Logo t={O} size={26} /> {O.city} {O.name}</>} class="tr-col">
+      <GmCard w={w} tid={O.id} />
       {O.roster.map(id => w.players[id]).sort((a, b) => playerValue(b) - playerValue(a)).map(p => <PRow p={p} side="get" />)}
       <div class="tr-picks">{picks(O.id).map(p => <button data-nav class={`pk ${d.getPicks.some((x: PK) => pkKey(x) === pkKey(p)) ? 'on' : ''}`} onClick={() => toggleP('getPicks', p)}>{p.season} {p.round === 1 ? '1st' : '2nd'}{p.original !== O.id ? ` (${p.original})` : ''}</button>)}</div>
     </Panel>
@@ -58,11 +60,25 @@ function TradeFinder({ w }: { w: World }) {
       <div class="row-btns">
         {closedHard ? <Chip kind="bad">{closedHard}</Chip>
           : reply?.accept ? <Btn kind="big" auto onClick={() => done(d)}>Shake on it</Btn>
-            : reply?.counter ? <><Btn kind="big" auto onClick={takeCounter}>Add {reply.counter.label} and do it</Btn><Btn kind="ghost" onClick={() => setReply(null)}>Keep working</Btn></>
-              : <Btn kind="big" disabled={empty} onClick={propose}>Call {O.gm.split(' ').slice(-1)[0]}</Btn>}
+            : reply?.counter ? <><Btn kind="big" auto onClick={takeCounter}>Agree: {reply.counter.label}</Btn><Btn kind="ghost" onClick={() => setReply(null)}>Keep working</Btn></>
+              : <Btn kind="big" disabled={empty || !phoneOpen(w, O.id).open} onClick={propose}>Call {O.gm.split(' ').slice(-1)[0]}</Btn>}
         {!empty && <Btn kind="ghost" onClick={() => set({ give: [], get: [], givePicks: [], getPicks: [] })}>Clear</Btn>}
       </div>
     </div>
+  </div>;
+}
+
+function GmCard({ w, tid }: { w: World; tid: string }) {
+  const t = w.teams[tid];
+  const prof = gmProfile(w, tid);
+  const st = patience(w, tid);
+  const ph = phoneOpen(w, tid);
+  const v = Math.max(0, st.cur) / prof.max * 100;
+  return <div class={`gm-card ${ph.open ? '' : 'closed'}`}>
+    <div class="gm-top"><b>GM {t.gm}</b><span>{t.clock}</span></div>
+    <div class="gm-style">{prof.style}</div>
+    <div class="gm-pat"><span>Patience</span><div class={`meter pat ${v < 30 ? 'low' : ''}`}><i style={{ width: `${v}%` }} /></div></div>
+    {!ph.open && <div class="gm-closed">{ph.text}</div>}
   </div>;
 }
 
