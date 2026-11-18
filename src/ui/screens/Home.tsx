@@ -1,7 +1,7 @@
 // Courtside (Home), built on the approved 1976 mockup: arena stands and floor, the center-hung bulb scoreboard,
 // the "last night" broadcast chyron, the newspaper crawl, the starting five on the floor, and the decisions at the scorer's table.
 import { useStore, go, openModal, setUI, commit } from '../store';
-import { Headshot, Btn, MONTHS, DAYS, seasonLabel, condWord, Logo } from '../util';
+import { Headshot, Btn, MONTHS, DAYS, seasonLabel, condWord, Logo, logoUrl } from '../util';
 import { Bracket } from '../Bracket';
 import { openRequest, needDef, needMetric } from '../../sim/needs';
 import { sim, watchNext, nextUserGame, lastUserGame, runCommand, attendSeries, autopilot } from '../actions';
@@ -34,7 +34,7 @@ export function CourtsideBg({ w }: { w: World }) {
     <polygon points="430,490 1450,490 1700,900 -100,900" fill="none" stroke="#f6ecd4" stroke-opacity=".75" stroke-width="3" />
     <line x1="940" y1="490" x2="940" y2="900" stroke="#f6ecd4" stroke-opacity=".7" stroke-width="3" />
     <ellipse cx="940" cy="640" rx="200" ry="52" fill="var(--tp)" fill-opacity=".6" stroke="#f6ecd4" stroke-opacity=".75" stroke-width="3" />
-    <image href={`assets/logos/${t.abbr}.png`} x="870" y="600" width="140" height="80" preserveAspectRatio="xMidYMid meet" opacity=".55" />
+    <image href={logoUrl(t)} x="870" y="600" width="140" height="80" preserveAspectRatio="xMidYMid meet" opacity=".55" />
   </svg>;
 }
 
@@ -60,15 +60,15 @@ function Scoreboard({ w }: { w: World }) {
     } else { l1 = 'Regular season'; big = 'Final week'; small = 'Playoffs next'; }
   } else if (S.phase === 'playoffs') {
     const sr = S.playoffs!.series.filter(s => s.hi === u || s.lo === u).slice(-1)[0];
-    const rn = ['', 'First round', 'Conf. semifinal', 'Conf. final', 'NBA Finals'];
+    const rn = ['Play-in', 'First round', 'Conf. semifinal', 'Conf. final', 'NBA Finals'];
     if (sr) {
       const opp = w.teams[sr.hi === u ? sr.lo : sr.hi];
       const us = sr.hi === u ? sr.wHi : sr.wLo, them = sr.hi === u ? sr.wLo : sr.wHi;
       l1 = `Playoffs · ${rn[sr.round]}`; big = opp.city === 'New York' ? `NY ${opp.name}` : opp.city;
-      small = sr.winner ? (sr.winner === u ? 'Series won' : 'Eliminated') : `Best of ${sr.bestOf}`;
-      midLab = 'Series'; mid = `${us}-${them}`; midSub = sr.winner ? (sr.winner === u ? 'We advance' : 'Season over') : us > them ? 'We lead' : us < them ? 'We trail' : 'Tied';
+      small = sr.winner ? (sr.winner === u ? (sr.bestOf === 1 ? 'Game won' : 'Series won') : 'Eliminated') : sr.bestOf === 1 ? 'Win or go home' : `Best of ${sr.bestOf}`;
+      midLab = sr.bestOf === 1 ? 'Play-in' : 'Series'; mid = `${us}-${them}`; midSub = sr.winner ? (sr.winner === u ? 'We advance' : 'Season over') : us > them ? 'We lead' : us < them ? 'We trail' : sr.bestOf === 1 ? 'One game' : 'Tied';
     } else {
-      const bye = ['East', 'West'].some(c => (((S as any)[`seeds${c}`] as string[]) ?? []).includes(u));
+      const bye = (S.playoffs?.format?.byes ?? true) && ['East', 'West'].some(c => (((S as any)[`seeds${c}`] as string[]) ?? []).slice(0, 2).includes(u));
       l1 = 'Playoffs'; big = bye ? 'First-round bye' : 'Season over'; small = bye ? 'Resting up' : 'We missed the playoffs';
     }
   } else {
@@ -219,6 +219,13 @@ function Bosses({ w }: { w: World }) {
   </section>;
 }
 
+function playoffFormatLine(w: World) {
+  const f = w.season.playoffs?.format;
+  if (!f) return '';
+  if (f.byes) return `Division winners skip the best-of-${f.bestOf[1]} first round`;
+  if (f.playIn) return 'Seeds 7–10 play in for the last two spots · every series best of seven';
+  return `${f.teams} teams · first round best of ${f.bestOf[1]}`;
+}
 export function Home() {
   const { world: w } = useStore();
   const S = w!.season;
@@ -232,7 +239,7 @@ export function Home() {
     <Bosses w={w!} />
     <Chyron w={w!} />
     <Ticker w={w!} />
-    {showBracket ? <section class="po-panel"><div class="f5-h"><h3>{S.phase === 'regular' ? 'Playoff picture' : `${seasonLabel(S.year)} playoffs`}</h3><span>{S.phase === 'regular' ? 'If the season ended today' : 'Division winners skip the best-of-three first round'}</span></div><Bracket w={w!} compact /></section>
+    {showBracket ? <section class="po-panel"><div class="f5-h"><h3>{S.phase === 'regular' ? 'Playoff picture' : `${seasonLabel(S.year)} playoffs`}</h3><span>{S.phase === 'regular' ? 'If the season ended today' : playoffFormatLine(w!)}</span></div><Bracket w={w!} compact /></section>
       : <><Floor w={w!} /><div class="scorers" /><Decisions w={w!} /></>}
   </div>;
 }

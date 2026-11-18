@@ -6,16 +6,21 @@ import { runDelegates, delegated, offseasonRoster } from '../sim/delegate';
 import { aiFreeAgency, executeTrade, evaluateTrade, requestCoach, releasePlayer, TRADE_DEADLINE } from '../sim/gm';
 import { projectedWins } from '../sim/world';
 import { commit, getWorld, go, openModal, runBusy, setUI, setWorld, toast, ui } from './store';
+import { markShownNow } from './Showcase';
+import { setEraYear } from '../sim/history';
+import { setClassData, classData } from '../sim/seasons';
 
 let DATA: any = null;
 export async function loadData() {
   if (DATA) return DATA;
-  const r = await fetch('data/world1976.json');
+  const [r, c] = await Promise.all([fetch('data/world1976.json'), classData() ? null : fetch('data/classes.json')]);
   DATA = await r.json();
+  if (c) { try { setClassData(await c.json()); } catch (e) { console.error('draft classes unavailable; later classes will be generated', e); } }
   return DATA;
 }
 export function startNewGame(data: any, opts: { userTeam: string; mode: 'career' | 'sandbox'; gmName: string; seed?: string }) {
   const w = createWorld(data, opts);
+  markShownNow(w);
   Object.assign(projectedWinsCache, projectedWins(w));
   addMessage(w, { date: w.season.day, from: w.owner.name, role: 'Owner', subject: 'Welcome aboard', body: `Welcome to the ${w.teams[opts.userTeam].city} ${w.teams[opts.userTeam].name}. ${w.owner.objective} The coach runs the team on the floor; you run everything else.`, urgent: 1, tag: 'Owner', actions: [{ label: 'Understood', cmd: 'dismiss' }] });
   setWorld(w);
@@ -23,6 +28,8 @@ export function startNewGame(data: any, opts: { userTeam: string; mode: 'career'
   commit();
 }
 export function enterLoaded(w: World) {
+  setEraYear(w.season.year);
+  if (!(w as any).shown) markShownNow(w);
   tidyMessages(w);
   Object.assign(projectedWinsCache, projectedWins(w));
   setWorld(w);
@@ -299,6 +306,9 @@ export function autopilot() {
   runBusy('Autopilot — press Stop to take the wheel', () => {
     if (ui.stopRequested || w.meta.fired) return false;
     const ph = S().phase;
+    // the playoffs play at a watchable pace on the Home bracket; everything else runs flat out
+    if (ph === 'playoffs') { if (!ui.busyThin) { ui.busyThin = true; if (ui.screen !== 'home' || ui.rafters) go('home'); } ui.busyPace = 380; }
+    else { ui.busyPace = 0; ui.busyThin = false; }
     if (ph === 'preseason' || ph === 'regular' || ph === 'playoffs') {
       const u0 = urgentCount(w);
       dayStep(w);
@@ -308,5 +318,5 @@ export function autopilot() {
     if (ph === 'draft') { if (!delegated(w, 'draft')) return false; runDraftUntilUser(w, true); runDelegates(w); return true; }
     if (ph === 'freeagency') { if (!delegated(w, 'offseason')) return false; runDelegates(w); offseasonRoster(w); beginNextSeasonSync(w); seasons++; return true; }
     return false;
-  }, () => { tidyMessages(w); toast(ui.stopRequested ? 'You have the wheel.' : w.meta.fired ? 'Autopilot stopped: you have been fired.' : 'Autopilot paused: something needs you.'); ui.stopRequested = false; void seasons; });
+  }, () => { ui.busyPace = 0; ui.busyThin = false; tidyMessages(w); toast(ui.stopRequested ? 'You have the wheel.' : w.meta.fired ? 'Autopilot stopped: you have been fired.' : 'Autopilot paused: something needs you.'); ui.stopRequested = false; void seasons; });
 }

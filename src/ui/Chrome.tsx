@@ -54,7 +54,7 @@ export function TopBar() {
     <Logo t={t} size={58} class="tb-logo" />
     <div class="tb-name">
       <div class="tb-full">{t.city} {t.name}</div>
-      <div class="tb-sub">{seasonLabel(S.year)} · {PHASE_LABEL[S.phase]} · {ARENAS[t.abbr] ?? ARENAS[t.id] ?? ''}{w!.meta.mode === 'sandbox' ? ' · Sandbox' : ''}</div>
+      <div class="tb-sub">{seasonLabel(S.year)} · {PHASE_LABEL[S.phase]} · {t.arena ?? ARENAS[t.abbr] ?? ARENAS[t.id] ?? ''}{w!.meta.mode === 'sandbox' ? ' · Sandbox' : ''}</div>
     </div>
     <div class="tb-chips">
       <div class="tb-chip"><b>{t.w}–{t.l}</b><span>Record</span></div>

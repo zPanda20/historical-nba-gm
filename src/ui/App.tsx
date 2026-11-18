@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useState } from 'preact/hooks';
 import { useStore, setUI, go, closeModal, SECTIONS, ui, getWorld, Screen } from './store';
 import { installHoverFocus, isTyping, moveSelection, focusFirst } from './nav';
 import { teamTheme } from './theme';
-import { openMostUrgent } from './actions';
+import { openMostUrgent, enterLoaded, loadData } from './actions';
 import { Title, NewGame } from './Title';
 import { TopBar, NavRail, UrgentSlot, toggleFullscreen } from './Chrome';
 import { Home, CourtsideBg } from './screens/Home';
@@ -16,6 +16,9 @@ import { Games, Gamecast } from './screens/Games';
 import { People } from './screens/People';
 import { Modals } from './Modals';
 import { Settings } from './Settings';
+import { ShowcaseLayer, showing } from './Showcase';
+import type { World } from '../sim/types';
+import { seasonLabel } from './util';
 
 const W = 1600, H = 900;
 
@@ -37,7 +40,8 @@ function useFit() {
 
 function onKey(e: KeyboardEvent) {
   const typing = isTyping();
-  if (ui.busy) { e.preventDefault(); if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') ui.stopRequested = true; return; }
+  if (showing() && !ui.busy) return;
+  if (ui.busy) { e.preventDefault(); if (e.key === 'Escape' || ((e.key === 'Enter' || e.key === ' ') && !showing())) ui.stopRequested = true; return; }
   if (e.key === 'Escape') {
     e.preventDefault();
     if (typing) { (document.activeElement as HTMLElement).blur(); return; }
@@ -124,11 +128,20 @@ export function App() {
         {u.settings && <Settings />}
         {u.modal && <Modals />}
       </>}
-      {u.busy && <div class="busy" data-scope><div class="busy-card"><div class="bulbs-sm">● ● ●</div><div class="busy-t">{u.busy}…</div>{world && <div class="busy-d">{world.season.day}</div>}{u.busy.startsWith('Autopilot') && <><div class="busy-s">{world?.teams[world.meta.userTeam].w}–{world?.teams[world.meta.userTeam].l} · {world?.season.phase}</div><button class="btn big" onPointerDown={() => { ui.stopRequested = true; }} onClick={() => { ui.stopRequested = true; }}>Stop</button></>}</div></div>}
+      {u.mode === 'game' && <ShowcaseLayer />}
+      {u.busy && <div class={`busy ${u.busyThin ? 'thin' : ''}`} data-scope><div class="busy-card"><div class="bulbs-sm">● ● ●</div><div class="busy-t">{u.busy}…</div>{world && <div class="busy-d">{world.season.day}</div>}{u.busy.startsWith('Autopilot') && <><div class="busy-s">{autoLine(world)}</div><button class="btn big" onPointerDown={() => { ui.stopRequested = true; }} onClick={() => { ui.stopRequested = true; }}>Stop</button></>}</div></div>}
       {u.toast && <div class="toast" key={u.toast.id}>{u.toast.text}</div>}
     </div>
   </div>;
 }
+function autoLine(w: World | null) {
+  if (!w) return '';
+  const t = w.teams[w.meta.userTeam], S = w.season;
+  if (S.phase === 'playoffs') { const P = S.playoffs!; return `${S.year + 1} playoffs · ${['Play-in', 'First round', 'Conference semifinals', 'Conference finals', 'NBA Finals'][P.round] ?? ''}`; }
+  if (S.phase === 'draft') return `${S.year + 1} draft`;
+  if (S.phase === 'freeagency') return 'Free agency';
+  return `${seasonLabel(S.year)} · ${t.abbr} ${t.w}–${t.l}`;
+}
 export { getWorld };
 // console access for testing and tinkering
-(window as any).hnba = { getWorld, ui, commit: () => setUI({}) };
+(window as any).hnba = { getWorld, ui, commit: () => setUI({}), load: async (w: any) => { await loadData(); enterLoaded(w); } };

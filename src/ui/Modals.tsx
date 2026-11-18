@@ -1,4 +1,6 @@
 import { useState } from 'preact/hooks';
+import { $y } from '../sim/history';
+import { positionsOf, makeGameplan } from '../sim/coach';
 import { useStore, closeModal, commit, toast, openModal, go, setUI, ui } from './store';
 import { Headshot, Logo, Btn, Chip, Meter, ht, f1, pct, seasonLabel, OvrBadge, injuryChip, seenOvr, CondBar } from './util';
 import { MessageView, peopleEra } from './screens/People';
@@ -48,7 +50,7 @@ function PlayerModal({ w, id }: { w: World; id: string }) {
         <Headshot p={p} size={180} class="pm-hs" />
         <div class="pm-ovr">{est.exact ? <><b>{p.ovr}</b><small>Overall (coach's read)</small></> : <><b>{est.lo}–{est.hi}</b><small>Overall (scouting estimate)</small></>}</div>
         <div class="pm-bio">
-          <div><span>Position</span><b>{p.pos}</b></div><div><span>Age</span><b>{p.age ?? '—'}</b></div>
+          <div><span>Position</span><b title="Positions he can credibly play">{positionsOf(p).map(x => x.pos).join(' / ')}</b></div><div><span>Age</span><b>{p.age ?? '—'}</b></div>
           <div><span>Height</span><b>{ht(p.hgt)}</b></div><div><span>Weight</span><b>{p.wgt ? `${p.wgt} lb` : '—'}</b></div>
           <div class="w"><span>College</span><b>{p.college ?? '—'}</b></div>
           <div class="w"><span>Team</span><b>{team ? `${team.city} ${team.name}` : p.retired ? 'Retired' : p.rosterStatus}</b></div>
@@ -91,7 +93,7 @@ function PlayerModal({ w, id }: { w: World; id: string }) {
           {!mine && !p.retired && <ScoutBox w={w} p={p} />}
           {mine && <>
             <h4>Ask the coach</h4>
-            <div class="pm-role"><span>Coach's role</span><b>{roles(w)[p.id]?.role ?? '—'}</b>{(roles(w)[p.id]?.min ?? 0) >= 4 && <small>~{Math.round(roles(w)[p.id].min)} min a night</small>}{w.teams[u].minutesRequests?.[p.id] && <small>Your last ask: {w.teams[u].minutesRequests![p.id].kind} · {w.teams[u].minutesRequests![p.id].status}</small>}</div>
+            <div class="pm-role"><span>Coach's role</span><b>{roles(w)[p.id]?.role ?? '—'}{(() => { const sl = makeGameplan(w, w.teams[u], w.coaches[w.teams[u].coach]).slots?.[p.id]; return sl ? ` at ${sl}` : ''; })()}</b>{(roles(w)[p.id]?.min ?? 0) >= 4 && <small>~{Math.round(roles(w)[p.id].min)} min a night</small>}{w.teams[u].minutesRequests?.[p.id] && <small>Your last ask: {w.teams[u].minutesRequests![p.id].kind} · {w.teams[u].minutesRequests![p.id].status}</small>}</div>
             <Btn kind="sm" auto onClick={() => ask('more')}>More minutes</Btn>
             <Btn kind="sm" onClick={() => ask('protect')}>Manage his load</Btn>
             <Btn kind="sm" onClick={() => ask('develop')}>Development focus</Btn>
@@ -165,7 +167,7 @@ function OfferModal({ w, pid, msgId }: { w: World; pid: string; msgId?: string }
     </div>
     {res?.ok ? <><div class="reply ok">{res.text}</div><div class="row-btns"><Btn kind="big" auto onClick={closeModal}>Done</Btn></div></> : <>
       <div class="stepper"><span>Salary per year</span>
-        <Btn kind="sm ghost" onClick={() => setSal(Math.max(30000, sal - 10000))}>−</Btn><b>{fmt$(sal)}</b><Btn kind="sm ghost" onClick={() => setSal(sal + 10000)}>+</Btn></div>
+        <Btn kind="sm ghost" onClick={() => setSal(Math.max($y(30000), sal - $y(10000)))}>−</Btn><b>{fmt$(sal)}</b><Btn kind="sm ghost" onClick={() => setSal(sal + $y(10000))}>+</Btn></div>
       <div class="stepper"><span>Years</span>
         {[1, 2, 3, 4, 5].map(y => <button data-nav class={`btn sm ${yrs === y ? '' : 'ghost'}`} onClick={() => setYrs(y)}>{y}</button>)}</div>
       {!own && <NeedImpact w={w} after={[...t.roster, p.id]} />}

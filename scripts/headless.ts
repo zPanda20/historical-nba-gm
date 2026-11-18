@@ -11,7 +11,7 @@ const w = createWorld(data, { userTeam: 'LAL', mode: 'sandbox', gmName: 'Test', 
 Object.assign(projectedWinsCache, projectedWins(w));
 let n = 0;
 while (w.season.phase === 'preseason' || w.season.phase === 'regular') { advanceDay(w); n++; }
-const games = w.season.games.filter(g => g.played && !g.playoff);
+const games = w.season.games.filter(g => g.played && !g.playoff && g.box);
 const T: any = { pts: 0, fga: 0, fgm: 0, fta: 0, ftm: 0, oreb: 0, dreb: 0, ast: 0, stl: 0, blk: 0, tov: 0, pf: 0, poss: 0, homeW: 0, ot: 0 };
 for (const g of games) {
   for (const side of ['home', 'away'] as const) for (const l of g.box![side]) { T.pts += l.pts; T.fga += l.fga; T.fgm += l.fgm; T.fta += l.fta; T.ftm += l.ftm; T.oreb += l.oreb; T.dreb += l.dreb; T.ast += l.ast; T.stl += l.stl; T.blk += l.blk; T.tov += l.tov; T.pf += l.pf; }

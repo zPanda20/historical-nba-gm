@@ -6,6 +6,7 @@ import { addEvent, addMessage, addNews, potentialOvr, projectedWins, teamStrengt
 import { executeTradeBetween, aiProposeTrade, aiAiTrades } from './trade';
 import type { TradeOffer } from './trade';
 import { openJobMarket } from './jobs';
+import { $y } from './history';
 import { checkCoachRequest, makeCoachRequest, openRequest, worstNeed, needDef } from './needs';
 
 export const TRADE_DEADLINE = (year: number) => `${year + 1}-02-15`; // alpha assumption, not a verified 1977 rule
@@ -22,7 +23,7 @@ export function marketSalary(p: Player): number {
   const v = playerValue(p), a = p.age ?? 27;
   let s = Math.exp(10.9 + 0.085 * (v - 48));
   if (a >= 32) s *= 0.8; if (a <= 22) s *= 0.9;
-  return Math.round(clamp(s, 30000, 700000) / 5000) * 5000;
+  return $y(clamp(s, 30000, 700000));
 }
 export { assetValue, pickValue, evaluateTrade, staffRead, aiMargin, tradeLegal, executeTradeBetween } from './trade';
 export type { TradeOffer, PickRef, TradeReply } from './trade';
@@ -44,7 +45,7 @@ export function playerAccepts(w: World, p: Player, tid: string, salary: number, 
   const roleRank = team.roster.map(id => playerValue(w.players[id])).filter(v => v > playerValue(p)).length;
   const role = roleRank < 5 ? 1 : roleRank < 8 ? 0.4 : -0.4;
   const yearsPref = (p.age ?? 27) >= 30 ? (years >= 2 ? 0.4 : -0.3) : years >= 3 ? 0.15 : 0;
-  const money = (salary - ask) / Math.max(25000, ask * 0.15);
+  const money = (salary - ask) / Math.max($y(25000), ask * 0.15);
   const loyalty = p.team === tid ? (p.traits.loyalty - 50) / 40 : 0;
   const s = money + role * 0.6 + (winPct - 0.5) * 2 * ((p.traits.drive ?? 50) / 60) + yearsPref + loyalty;
   const rng = stream(w.meta.seed, 'agent', w.season.day, p.id, salary, years);
@@ -143,7 +144,7 @@ export function aiDailyMoves(w: World) {
     const healthy = t.roster.filter(id => !(w.players[id].injury && w.players[id].injury!.daysLeft > 3)).length;
     if (t.roster.length < 10 || (healthy < 9 && t.roster.length < 12)) {
       const best = w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && rightsOk(p, t.id)).sort((a, b) => playerValue(b) - playerValue(a))[0];
-      if (best) signPlayer(w, best.id, t.id, Math.max(30000, Math.round((best.ask ?? marketSalary(best)) * 0.9 / 5000) * 5000), 1);
+      if (best) signPlayer(w, best.id, t.id, Math.max($y(30000), Math.round((best.ask ?? marketSalary(best)) * 0.9 / 5000) * 5000), 1);
     }
   }
   // AI trade proposal to the user, roughly every 3 weeks, before the deadline
@@ -269,7 +270,7 @@ export function aiFreeAgency(w: World) {
     if (t.roster.length >= 12) continue;
     const pool = w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && rightsOk(p, t.id)).sort((a, b) => playerValue(b) - playerValue(a));
     const p = pool[Math.floor(rng.next() * Math.min(3, pool.length))];
-    if (p && (t.roster.length < 11 || playerValue(p) > 50)) signPlayer(w, p.id, t.id, Math.max(30000, p.ask ?? marketSalary(p)), rng.int(1, 3));
+    if (p && (t.roster.length < 11 || playerValue(p) > 50)) signPlayer(w, p.id, t.id, Math.max($y(30000), p.ask ?? marketSalary(p)), rng.int(1, 3));
   }
   // trim to 12
   for (const t of order) while (t.roster.length > 12) {

@@ -16,12 +16,12 @@ export function Title() {
   const last = saves?.find(s => s.id === lastSaveId()) ?? saves?.[0];
   const load = async (id: string) => {
     setUI({ busy: 'Loading save' });
-    try { enterLoaded(await loadSave(id)); } catch (e: any) { toast(`Could not load: ${e.message}`); }
+    try { await loadData(); enterLoaded(await loadSave(id)); } catch (e: any) { toast(`Could not load: ${e.message}`); }
     setUI({ busy: null });
   };
   const onImport = async (e: any) => {
     const f = e.target.files?.[0]; if (!f) return;
-    try { enterLoaded(await importSaveFile(f)); toast('Save imported.'); } catch (err: any) { toast(err.message); }
+    try { await loadData(); enterLoaded(await importSaveFile(f)); toast('Save imported.'); } catch (err: any) { toast(err.message); }
   };
   return <div class="title-scr">
     <div class="title-lights" />
@@ -29,7 +29,7 @@ export function Title() {
       <div class="title-pre">A front-office life · 1976 – 2040</div>
       <h1 class="title-h">Historical<br />NBA GM</h1>
       <div class="title-stripe" />
-      <div class="title-ver">Alpha 0.1 · The 1976–77 season</div>
+      <div class="title-ver">Alpha 0.5 · 1976 to 2040</div>
       <div class="title-menu">
         {last && <button data-nav data-autofocus class="tm-i" onClick={() => load(last.id)}>
           <span>Continue</span><small>{last.title} · {seasonLabel(last.season)} {PHASE_LABEL[last.phase]} · {last.record}</small></button>}
@@ -80,7 +80,7 @@ export function NewGame() {
       <div class="ng-div aba">
         <div class="ng-div-h">ABA survivors · coming later</div>
         {ABA.map(a => <button data-nav class="ng-team disabled" aria-disabled="true" onClick={() => toast('ABA survivor clubs arrive in a later alpha.')}>
-          <Logo t={a.id} size={52} /><div><div class="ng-name">{a.name}</div><div class="ng-city">Alternate history · not in alpha 0.1</div></div>
+          <Logo t={a.id} size={52} /><div><div class="ng-name">{a.name}</div><div class="ng-city">Alternate history · not in this alpha</div></div>
         </button>)}
       </div>
     </div>

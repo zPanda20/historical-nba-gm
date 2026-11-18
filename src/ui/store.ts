@@ -29,6 +29,8 @@ export interface UIState {
   castSpeed: number;
   tradeDraft: { other: string; give: string[]; get: string[]; givePicks: any[]; getPicks: any[] } | null;
   stopRequested?: boolean;
+  busyPace?: number;   // ms between steps (0 = as fast as possible)
+  busyThin?: boolean;  // slim, see-through busy bar (the screen behind stays visible)
   peopleEra?: string;
 }
 
@@ -47,6 +49,7 @@ export function setWorld(w: World | null) { world = w; notify(); }
 let saveTimer: any = null;
 /** Call after mutating the world. Re-renders and schedules an autosave. */
 export function commit(save = true) {
+  hooks.afterStep?.(world);
   notify();
   if (save && world) {
     clearTimeout(saveTimer);
@@ -73,12 +76,19 @@ export function useStore() {
 export function runBusy(label: string, step: () => boolean, done?: () => void) {
   setUI({ busy: label });
   const slice = () => {
+    // a showcase on screen holds the clock until it is dismissed (or times out in autopilot)
+    if (((ui as any).shows ?? []).length && !ui.stopRequested) { setTimeout(slice, 150); return; }
     const t0 = performance.now();
     let more = true;
-    while (more && performance.now() - t0 < 30) more = step();
+    const pace = ui.busyPace ?? 0;
+    if (pace > 0) more = step();
+    else while (more && performance.now() - t0 < 30) { more = step(); if (((ui as any).shows ?? []).length || (ui.busyPace ?? 0) > 0) break; }
+    hooks.afterStep?.(world);
     notify();
-    if (more) setTimeout(slice, 0);
-    else { ui.busy = null; commit(); done?.(); }
+    if (more) setTimeout(slice, (ui.busyPace ?? 0) > 0 ? ui.busyPace : 0);
+    else { ui.busy = null; ui.busyPace = 0; ui.busyThin = false; commit(); done?.(); }
   };
   setTimeout(slice, 30);
 }
+/** Late-bound hooks (keeps the store free of UI imports). */
+export const hooks: { afterStep?: (w: World | null) => void } = {};

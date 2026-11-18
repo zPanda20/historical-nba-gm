@@ -1,6 +1,7 @@
 // Trades (F13/F22): every front office values players through its OWN eyes (noisy beliefs), its clock,
 // its positional needs, roster spots and contracts. No one is omniscient, and nobody accepts just anything.
 import type { Player, World } from './types';
+import { $y } from './history';
 import { clamp, sigmoid, stream } from './rng';
 import { playerValue } from './coach';
 import { potentialOvr, projectedWins, addEvent, addNews, addMessage } from './world';
@@ -62,7 +63,7 @@ export function assetValue(w: World, p: Player, forTeam: string, ovr = believedO
   let v = conv(now * ovr + fut * pot);
   if (p.contract) {
     const yrs = Math.max(1, Math.min(3, p.contract.years));
-    v += (marketSalary(p) - p.contract.salary) / 30000 * yrs * 0.5;
+    v += (marketSalary(p) - p.contract.salary) / $y(30000) * yrs * 0.5;
   }
   if (p.injury && p.injury.daysLeft > 0) v *= 1 - Math.min(0.5, p.injury.daysLeft / 200);
   return Math.max(0, v);
@@ -124,7 +125,7 @@ export function aiMargin(w: World, offer: TradeOffer) {
   const O = w.teams[offer.other];
   const { getV, giveV } = sideValue(w, O.id, offer.get, offer.give, offer.getPicks, offer.givePicks);
   const dPay = offer.give.reduce((s, id) => s + (w.players[id].contract?.salary ?? 0), 0) - offer.get.reduce((s, id) => s + (w.players[id].contract?.salary ?? 0), 0);
-  const payPen = Math.max(0, payroll(w, O.id) + dPay - (O.payrollBudget ?? 1e9)) / 40000;
+  const payPen = Math.max(0, payroll(w, O.id) + dPay - (O.payrollBudget ?? 1e9)) / $y(40000);
   const friction = (2 + giveV * 0.06) * gmProfile(w, O.id).tough;
   return { margin: getV - giveV - payPen - friction, getV, giveV, payPen };
 }

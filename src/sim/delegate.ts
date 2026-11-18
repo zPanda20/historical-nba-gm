@@ -1,5 +1,6 @@
 // Delegation: hand parts of the job to your staff. With everything delegated the franchise runs itself.
 import type { Player, World } from './types';
+import { $y } from './history';
 import { playerValue } from './coach';
 import { addMessage } from './world';
 import { executeTrade, fmt$, marketSalary, payroll, playerAccepts, releasePlayer, rightsOk, scoutReport, signPlayer } from './gm';
@@ -37,7 +38,7 @@ function tryResign(w: World, p: Player): boolean {
   const v = playerValue(p), age = p.age ?? 28;
   const ask = p.ask ?? marketSalary(p);
   const worth = (v >= 50 && age <= 31) || v >= 60;
-  if (!worth || ask - (p.contract?.salary ?? 0) > budgetRoom(w) + 40000) return false;
+  if (!worth || ask - (p.contract?.salary ?? 0) > budgetRoom(w) + $y(40000)) return false;
   const yrs = age <= 27 ? 3 : age <= 30 ? 2 : 1;
   for (const sal of [ask, Math.round(ask * 1.08 / 5000) * 5000]) {
     if (playerAccepts(w, p, w.meta.userTeam, sal, yrs).ok) {
@@ -50,7 +51,7 @@ function tryResign(w: World, p: Player): boolean {
 
 function bestFreeAgent(w: World, room: number, filter: (p: Player) => boolean = () => true) {
   const u = w.meta.userTeam;
-  return w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && rightsOk(p, u) && (p.ask ?? marketSalary(p)) <= Math.max(room, 40000) && filter(p))
+  return w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && rightsOk(p, u) && (p.ask ?? marketSalary(p)) <= Math.max(room, $y(40000)) && filter(p))
     .sort((a, b) => (b.draftedBy === u ? 3 : 0) + playerValue(b) - ((a.draftedBy === u ? 3 : 0) + playerValue(a)))[0];
 }
 
@@ -86,7 +87,7 @@ export function runDelegates(w: World) {
     const healthy = t.roster.filter(id => !(w.players[id].injury && w.players[id].injury!.daysLeft > 5)).length;
     if (t.roster.length < 12 && (t.roster.length < 11 || healthy < 10)) {
       const p = bestFreeAgent(w, budgetRoom(w));
-      if (p) { const sal = Math.max(30000, p.ask ?? marketSalary(p)); if (playerAccepts(w, p, u, sal, 1).ok) { signPlayer(w, p.id, u, sal, 1); log(w, 'Assistant GM', `signed ${p.name} to fill a roster spot (${fmt$(sal)})`, true); } }
+      if (p) { const sal = Math.max($y(30000), p.ask ?? marketSalary(p)); if (playerAccepts(w, p, u, sal, 1).ok) { signPlayer(w, p.id, u, sal, 1); log(w, 'Assistant GM', `signed ${p.name} to fill a roster spot (${fmt$(sal)})`, true); } }
     }
   }
   // coach's request, via free agency (once a week)
@@ -97,11 +98,11 @@ export function runDelegates(w: World) {
     const now = needMetric(w, t.roster, req.key);
     const worst = t.roster.map(id => w.players[id]).filter(p => !p.injury).sort((a, b) => playerValue(a) - playerValue(b))[0];
     const room = budgetRoom(w) + (t.roster.length >= 12 && worst ? (worst.contract?.salary ?? 0) * 0.5 : 0);
-    const cands = w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && rightsOk(p, u) && (p.ask ?? marketSalary(p)) <= Math.max(40000, room));
+    const cands = w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && rightsOk(p, u) && (p.ask ?? marketSalary(p)) <= Math.max($y(40000), room));
     let best: Player | null = null, bestM = now + 0.75;
     for (const p of cands) { const after = t.roster.length >= 12 && worst ? [...t.roster.filter(id => id !== worst.id), p.id] : [...t.roster, p.id]; const m = needMetric(w, after, req.key); if (m > bestM) { bestM = m; best = p; } }
     if (best) {
-      const sal = Math.max(30000, best.ask ?? marketSalary(best));
+      const sal = Math.max($y(30000), best.ask ?? marketSalary(best));
       if (playerAccepts(w, best, u, sal, 1).ok) {
         if (t.roster.length >= 12 && worst) releasePlayer(w, worst.id);
         signPlayer(w, best.id, u, sal, 1);
@@ -128,7 +129,7 @@ export function offseasonRoster(w: World) {
   while (t.roster.filter(id => (w.players[id].contract?.years ?? 0) > 0).length < 12 && guard++ < 25) {
     const p = bestFreeAgent(w, budgetRoom(w), x => !skip.has(x.id));
     if (!p) break;
-    const sal = Math.max(30000, p.ask ?? marketSalary(p));
+    const sal = Math.max($y(30000), p.ask ?? marketSalary(p));
     if (playerAccepts(w, p, u, sal, p.age && p.age < 26 ? 2 : 1).ok) { signPlayer(w, p.id, u, sal, p.age && p.age < 26 ? 2 : 1); log(w, 'Assistant GM', `signed ${p.name} (${fmt$(sal)})`); }
     else skip.add(p.id);
   }

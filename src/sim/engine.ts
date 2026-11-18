@@ -2,7 +2,8 @@
 // The SAME function resolves watched and fast-simmed games; `log` only controls text output.
 import type { BoxLine, BoxScore, Coach, GameEvent, Player, Team, World } from './types';
 import { Rng, clamp, logit, sigmoid, stream, z } from './rng';
-import { Gameplan, makeGameplan, playerValue } from './coach';
+import { Gameplan, makeGameplan, playerValue, POSITIONS, PosKey, posScore } from './coach';
+import { eraRules, eraStyle } from './history';
 
 /** Alpha calibration constants (provisional; tuned to 1976-77 league anchors). */
 export const CAL = {
@@ -19,7 +20,27 @@ export const CAL = {
   spread: 0.47, // compresses percentile-based ratings (uniform 30-92) toward a realistic talent spread
   fatOn: 0.036, fatOff: 0.075,
   injuryPerMin: 0.00022,
+  threeElig: 0.5, threeK: 1.0, paceExp: 1.12, twoK: 1.0,
 };
+/** Ball security improves across eras (fewer turnovers per possession). */
+function tovEra(year: number) {
+  const pts: [number, number][] = [[1976, 0], [1984, -0.04], [1990, -0.11], [2000, -0.14], [2010, -0.17], [2025, -0.19], [2040, -0.2]];
+  for (let i = 0; i < pts.length - 1; i++) if (year <= pts[i + 1][0]) { const k = Math.max(0, (year - pts[i][0]) / (pts[i + 1][0] - pts[i][0])); return pts[i][1] + (pts[i + 1][1] - pts[i][1]) * k; }
+  return -0.2;
+}
+/** Two-point finishing gets easier as floors open up (spacing, rules against hand-checking, rim-first shot selection). */
+function twoEra(year: number) {
+  const pts: [number, number][] = [[1976, 0], [1979, 0.05], [1983, 0.12], [1987, 0.13], [1991, 0.12], [1995, 0.06], [1999, 0], [2003, 0.01], [2006, 0.05], [2012, 0.09], [2020, 0.15], [2026, 0.26], [2040, 0.28]];
+  for (let i = 0; i < pts.length - 1; i++) if (year <= pts[i + 1][0]) { const k = Math.max(0, (year - pts[i][0]) / (pts[i + 1][0] - pts[i][0])); return pts[i][1] + (pts[i + 1][1] - pts[i][1]) * k; }
+  return 0.26;
+}
+/** Era three-point accuracy baseline (league average make on a neutral look). */
+function threeBase(year: number, short: boolean) {
+  if (short) return 0.33;
+  const pts: [number, number][] = [[1979, 0.255], [1984, 0.255], [1988, 0.272], [1993, 0.282], [1997, 0.31], [2005, 0.315], [2015, 0.322], [2020, 0.327], [2040, 0.327]];
+  for (let i = 0; i < pts.length - 1; i++) if (year <= pts[i + 1][0]) { const k = Math.max(0, (year - pts[i][0]) / (pts[i + 1][0] - pts[i][0])); return pts[i][1] + (pts[i + 1][1] - pts[i][1]) * k; }
+  return 0.36;
+}
 
 type ShotType = 'rim' | 'close' | 'smid' | 'lmid' | 'three';
 const SHOT_MIX: Record<string, [ShotType, number][]> = {
@@ -34,7 +55,7 @@ const SHOT_MIX: Record<string, [ShotType, number][]> = {
 };
 const ASSIST_P: Record<string, number> = { post: 0.44, iso: 0.12, motion: 0.84, high: 0.7, pnr: 0.62, spot: 0.9, trans: 0.6, putback: 0.0 };
 
-interface PState { p: Player; slot: number; sec: number; F: number; fouls: number; out: boolean; injured: boolean; line: BoxLine; }
+interface PState { p: Player; slot: number; sec: number; F: number; fouls: number; out: boolean; injured: boolean; line: BoxLine; pos?: PosKey; mis: number; best: number; }
 interface Side { team: Team; coach: Coach; plan: Gameplan; ps: PState[]; on: PState[]; teamFouls: number; score: number; qScore: number[]; }
 
 export interface GameResult { hs: number; as: number; ot: number; box: BoxScore; log: GameEvent[]; injuries: { pid: string; days: number; type: string }[]; minutes: Record<string, number>; }
@@ -57,7 +78,16 @@ const fmtClock = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Mat
 const last = (p: Player) => p.name.split(' ').slice(-1)[0];
 
 export function simulateGame(world: World, gameId: string, homeId: string, awayId: string, opts: { log?: boolean; playoff?: boolean; neutral?: boolean } = {}): GameResult {
-  const rules = world.rules[String(world.season.year)] ?? world.rules['1976'];
+  const ER = eraRules(world.season.year);
+  const rules = { ...(world.rules['1976'] ?? {}), ...(world.rules[String(world.season.year)] ?? {}), three: ER.three };
+  const ST = eraStyle(world.season.year, world.meta.seed);
+  const paceK = Math.pow(106.5 / ST.pace, CAL.paceExp) * (1 - 0.025 * clamp((world.season.year - 1980) / 10, 0, 1));
+  const threeShare = rules.three ? ST.tpa / (ST.pace * 0.88) : 0;
+  const p3 = clamp(threeShare / CAL.threeElig * CAL.threeK * (0.77 + Math.max(0, threeShare - 0.2) * 1.2), 0, 0.97);
+  const base3 = threeBase(world.season.year, ER.threeShort);
+  const two = twoEra(world.season.year) * CAL.twoK;
+  const tovE = tovEra(world.season.year);
+  const foulE = 1 - 0.17 * clamp((world.season.year - 2004) / 16, 0, 1);
   const rng = stream(world.meta.seed, 'game', gameId);
   const irng = stream(world.meta.seed, 'injury', gameId);
   const mk = (tid: string): Side => {
@@ -65,13 +95,30 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
     const coach = world.coaches[team.coach];
     const plan = makeGameplan(world, team, coach);
     const avail = team.roster.map(id => world.players[id]).filter(p => p && !(p.injury && p.injury.daysLeft > 0));
-    const ps: PState[] = avail.map((p, i) => ({ p, slot: i, sec: 0, F: 0.04 + (100 - (p.cond ?? 100)) / 100 * 0.55 + (p.fatigueSeason ?? 0) * 0.08, fouls: 0, out: false, injured: false,
+    const ps: PState[] = avail.map((p, i) => ({ p, slot: i, sec: 0, mis: 0, best: Math.max(...POSITIONS.map(q => posScore(p, q))), F: 0.04 + (100 - (p.cond ?? 100)) / 100 * 0.55 + (p.fatigueSeason ?? 0) * 0.08, fouls: 0, out: false, injured: false,
       line: { pid: p.id, name: p.name, min: 0, pts: 0, fgm: 0, fga: 0, tpm: 0, tpa: 0, ftm: 0, fta: 0, oreb: 0, dreb: 0, ast: 0, stl: 0, blk: 0, tov: 0, pf: 0, pm: 0, gs: false } }));
     const on = plan.starters.map(id => ps.find(x => x.p.id === id)!).filter(Boolean);
     for (const x of ps) if (on.length < 5 && !on.includes(x)) on.push(x);
     on.forEach(x => (x.line.gs = true));
-    return { team, coach, plan, ps, on, teamFouls: 0, score: 0, qScore: [] };
+    const sd: Side = { team, coach, plan, ps, on, teamFouls: 0, score: 0, qScore: [] };
+    for (const x of on) x.pos = (plan.slots?.[x.p.id] as PosKey) ?? undefined;
+    assignSlots(sd, []);
+    return sd;
   };
+  // every man on the floor holds a spot; playing a spot you are not built for costs you on both ends
+  const structureOf = (sd: Side) => clamp(1.25 - (sd.coach.tactics + sd.coach.adaptability) / 170, 0.55, 1.05);
+  function assignSlots(sd: Side, kept: PState[]) {
+    const taken = new Set(kept.map(x => x.pos));
+    const incoming = sd.on.filter(x => !kept.includes(x) && !(x.pos && !taken.has(x.pos) && sd.on.filter(y => y.pos === x.pos).length === 1));
+    for (const x of sd.on) if (!incoming.includes(x) && x.pos) taken.add(x.pos);
+    for (const x of incoming.sort((a, b) => playerValue(b.p) - playerValue(a.p))) {
+      const free = POSITIONS.filter(q => !taken.has(q));
+      x.pos = free.sort((a, b) => posScore(x.p, b) - posScore(x.p, a))[0] ?? x.pos ?? (x.p.pos as PosKey);
+      taken.add(x.pos);
+    }
+    const m = structureOf(sd);
+    for (const x of sd.on) x.mis = x.pos ? Math.max(0, x.best - posScore(x.p, x.pos) - 2) * 0.5 * m : 0;
+  }
   const S: [Side, Side] = [mk(homeId), mk(awayId)];
   const log: GameEvent[] = [];
   const injuries: GameResult['injuries'] = [];
@@ -91,8 +138,21 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
 
   const C = centers(world);
   // effective rating re-centred on the league so z(eff) = 0 for an average rotation player
-  const eff = (x: PState, k: keyof Player['r']) => 55 + (x.p.r[k] - C[k]) * CAL.spread - 30 * Math.max(0, x.F - 0.3);
+  const eff = (x: PState, k: keyof Player['r']) => 55 + (x.p.r[k] - C[k]) * CAL.spread - 30 * Math.max(0, x.F - 0.3) - x.mis;
   const homeEdge = (team: number) => (opts.neutral ? 0 : team === 0 ? 1 : -1);
+  // lineup structure: who can bring the ball up, how many shooters space the floor, how many slow bigs share it
+  const lineup = (sd: Side) => {
+    let bh = -9, sp = 0, bigs = 0;
+    for (const x of sd.on) {
+      bh = Math.max(bh, z(eff(x, 'handle')) * 0.6 + z(eff(x, 'pass')) * 0.4);
+      const sk = rules.three ? Math.max(eff(x, 'three'), eff(x, 'mid') - 8) : eff(x, 'mid');
+      sp += sigmoid((sk - 52) / 5);
+      if (x.p.r.hgt >= 81 && x.p.r.handle < 52) bigs++;
+    }
+    return { bh, sp, bigs };
+  };
+  // a coach with a real plan (tactics, adaptability) softens the cost of an odd lineup; no plan, full cost
+  const structure = (sd: Side) => clamp(1.3 - (sd.coach.tactics + sd.coach.adaptability) / 150, 0.45, 1);
 
   const addPts = (side: number, n: number) => {
     S[side].score += n;
@@ -170,7 +230,9 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
       for (const x of cand) if (next.length < 5 && !next.includes(x)) next.push(x);
       const changed = next.filter(x => !side.on.includes(x));
       if (changed.length && opts.log) emit('sub', s, `${side.team.name} sub: ${changed.map(x => last(x.p)).join(', ')} in.`);
+      const kept = next.filter(x => side.on.includes(x));
       side.on = next;
+      if (changed.length) assignSlots(side, kept);
     }
   };
 
@@ -178,6 +240,8 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
   const pickW = (arr: PState[], w: (x: PState) => number) => arr[rng.weighted(arr.map(w))];
   const defenderOf = (actor: PState, d: Side) => {
     const order = ['PG', 'SG', 'SF', 'PF', 'C'];
+    const mate = actor.pos ? d.on.find(x => x.pos === actor.pos) : undefined;
+    if (mate) return mate;
     const ai = order.indexOf(actor.p.pos);
     return [...d.on].sort((a, b) => Math.abs(order.indexOf(a.p.pos) - ai) - Math.abs(order.indexOf(b.p.pos) - ai) || eff(b, 'perD') - eff(a, 'perD'))[0];
   };
@@ -222,6 +286,7 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
   const possession = () => {
     const O = S[off], D = S[1 - off];
     poss++;
+    const LO = lineup(O), LD = lineup(D), mO = structure(O), mD = structure(D);
     let shotClock = rules.shotClock;
     let action: string;
     if (ctx === 'putback') action = 'putback';
@@ -233,7 +298,7 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
     }
     actions[action] = (actions[action] ?? 0) + 1;
     // time used
-    let t = action === 'trans' ? clamp(rng.normal(CAL.secTrans, 2), 2, 11) : action === 'putback' ? clamp(rng.normal(3, 1.2), 1, 6) : clamp(rng.normal(CAL.secHalf * O.plan.pace, 4.2), 4, shotClock - 1);
+    let t = action === 'trans' ? clamp(rng.normal(CAL.secTrans, 2), 2, 11) : action === 'putback' ? clamp(rng.normal(3, 1.2), 1, 6) : clamp(rng.normal(CAL.secHalf * O.plan.pace * paceK, 4.2), 4, shotClock - 1);
     const hurry = clock <= t + 1;
     if (hurry) t = Math.max(0.5, clock - 0.5);
     // actor
@@ -247,7 +312,7 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
         case 'iso': return u * Math.exp((eff(x, 'drive') + eff(x, 'mid') - 110) / 80);
         case 'high': return u * Math.exp((eff(x, 'mid') + eff(x, 'pass') - 110) / 80 + (r.hgt - 80) / 18);
         case 'pnr': return u * Math.exp((eff(x, 'handle') + eff(x, 'drive') - 110) / 70);
-        case 'spot': return u * Math.exp((eff(x, 'mid') - 55) / 45);
+        case 'spot': return u * Math.exp(((threeShare > 0.15 ? eff(x, 'three') * Math.min(1, threeShare * 2) + eff(x, 'mid') * (1 - Math.min(1, threeShare * 2)) : eff(x, 'mid')) - 55) / 45);
         case 'trans': return u * Math.exp((eff(x, 'ath') + eff(x, 'drive') - 110) / 80);
         case 'putback': return 1;
         default: return u * Math.exp((eff(x, 'ins') + eff(x, 'iq') - 110) / 90);
@@ -259,7 +324,7 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
 
     // turnover (competing branch, F4)
     const ballZ = (z(eff(actor, 'handle')) * 0.6 + z(eff(actor, 'iq')) * 0.25 + z(eff(actor, 'pass')) * 0.15);
-    const pTO = clamp(sigmoid(logit(CAL.tov[action] ?? 0.14) - 0.22 * ballZ + 0.15 * z(eff(def, 'stl')) + (press - 0.55) * 0.6 + 0.25 * Math.max(0, actor.F - 0.4)), 0.02, 0.4);
+    const pTO = clamp(sigmoid(logit(CAL.tov[action] ?? 0.14) + tovE - 0.22 * ballZ + 0.15 * z(eff(def, 'stl')) + (press - 0.55) * 0.6 + 0.25 * Math.max(0, actor.F - 0.4) + 0.55 * mO * Math.max(0, 0.25 - LO.bh)), 0.02, 0.42);
     if (!hurry && rng.chance(pTO)) {
       runClock(Math.max(1, t * 0.6));
       actor.line.tov++;
@@ -324,8 +389,18 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
         }
       }
     }
+    // the era's three-point line: jumpers drift behind the arc, more so for real shooters
+    if (rules.three && (shotType === 'lmid' || shotType === 'smid') && action !== 'putback' && rng.chance(clamp(p3 * (shotType === 'lmid' ? 1.25 : 0.7) * Math.exp((eff(shooter, 'three') - 55) / 16), 0, 0.98))) {
+      shotType = 'three';
+      contest -= 0.08;
+    }
+    // mismatches: slow bigs chasing shooters on the perimeter, guards posted up by size
+    const sDef = defenderOf(shooter, D);
+    if (shotType === 'three' || shotType === 'lmid' || shotType === 'smid') contest -= mD * 0.5 * Math.max(0, (z(eff(shooter, 'ath')) - z(eff(sDef, 'ath'))) * 0.35 + (sDef.p.r.hgt >= 81 && shooter.p.r.hgt <= 79 ? 0.25 : 0));
+    if (action === 'post' || shotType === 'close') contest -= 0.07 * clamp(shooter.p.r.hgt - sDef.p.r.hgt, -4, 6);
     // help defense at the rim
     if (shotType === 'rim' || shotType === 'close') {
+      contest += 0.13 * Math.max(0, 2.4 - LO.sp) * mO; // no spacing: the paint is crowded
       const rimProt = Math.max(...D.on.map(x => z(eff(x, 'intD')) * 0.6 + z(eff(x, 'blk')) * 0.4));
       contest = contest * 0.6 + rimProt * 0.4;
     }
@@ -337,8 +412,8 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
       : shotType === 'smid' ? (eff(shooter, 'mid') * 0.6 + eff(shooter, 'ins') * 0.4)
       : shotType === 'three' ? eff(shooter, 'three') : eff(shooter, 'mid');
     const passBoost = assister ? CAL.bPass * (z(eff(assister, 'pass')) * 0.6 + 0.6) : 0;
-    let pMake = sigmoid(logit(CAL.baseMake[shotType]) + CAL.bShoot * z(skill) - CAL.bContest * contest + passBoost
-      - CAL.bFat * Math.max(0, shooter.F - 0.35) + CAL.homeLogit * homeEdge(off));
+    let pMake = sigmoid(logit(shotType === 'three' ? base3 : CAL.baseMake[shotType]) + CAL.bShoot * z(skill) - CAL.bContest * contest + passBoost
+      - CAL.bFat * Math.max(0, shooter.F - 0.35) + CAL.homeLogit * homeEdge(off) + (shotType === 'three' ? 0 : shotType === 'lmid' ? two * 0.4 : two));
     pMake = clamp(pMake, 0.08, 0.9);
 
     const isThree = shotType === 'three';
@@ -347,7 +422,7 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
     let blocked = false;
     if ((shotType === 'rim' || shotType === 'close') && rng.chance(clamp(0.062 * Math.exp(0.3 * Math.max(...D.on.map(x => z(eff(x, 'blk'))))), 0.02, 0.14))) blocked = true;
     // shooting foul
-    const pSF = clamp((CAL.shootFoul[shotType] ?? 0.04) * Math.exp(0.35 * z(eff(shooter, 'foulDraw')) - 0.25 * z(eff(shooterDef, 'foulAvoid'))), 0.005, 0.35);
+    const pSF = clamp((CAL.shootFoul[shotType] ?? 0.04) * foulE * Math.exp(0.35 * z(eff(shooter, 'foulDraw')) - 0.25 * z(eff(shooterDef, 'foulAvoid'))), 0.005, 0.35);
     const fouled = !blocked && rng.chance(pSF);
     const made = !blocked && rng.chance(fouled ? pMake * 0.62 : pMake);
     shooter.line.fga += fouled && !made ? 0 : 1;
@@ -387,7 +462,8 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
       ctx = rng.chance(0.42) ? 'putback' : 'half'; putbackBy = rb.who;
     } else {
       off = 1 - off;
-      ctx = rng.chance(CAL.transRate * (1.3 - S[off].plan.pace * 0.3) * Math.exp(z(S[off].on.reduce((a, x) => a + eff(x, 'ath'), 0) / 5) * 0.2)) ? 'trans' : 'half';
+      // slow, big lineups get beaten down the floor
+      ctx = rng.chance(CAL.transRate * (1.3 - S[off].plan.pace * 0.3) * Math.exp(z(S[off].on.reduce((a, x) => a + eff(x, 'ath'), 0) / 5) * 0.2) * (1 + 0.14 * Math.max(0, LO.bigs - 2) * mO)) ? 'trans' : 'half';
     }
   };
 

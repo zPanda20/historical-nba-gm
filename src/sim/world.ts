@@ -2,6 +2,8 @@
 import type { ClockState, Coach, GameRec, Player, Team, World } from './types';
 import { MODEL_VERSION, stream, clamp } from './rng';
 import { playerValue } from './coach';
+import { eraRules, setEraYear } from './history';
+import { classData, injectClass } from './seasons';
 
 export const SCHEMA = 1;
 
@@ -19,7 +21,8 @@ export function projectedWins(world: World): Record<string, number> {
   const mean = st.reduce((a, b) => a + b, 0) / st.length;
   const sd = Math.sqrt(st.reduce((a, b) => a + (b - mean) ** 2, 0) / st.length) || 1;
   const out: Record<string, number> = {};
-  ids.forEach((id, i) => (out[id] = Math.round(clamp(41 + ((st[i] - mean) / sd) * 9.5, 15, 65))));
+  const G = eraRules(world.season?.year ?? 1976).games;
+  ids.forEach((id, i) => (out[id] = Math.round(clamp(41 + ((st[i] - mean) / sd) * 9.5, 15, 65) * G / 82)));
   return out;
 }
 
@@ -31,7 +34,10 @@ export function buildSchedule(year: number, data: [string, string, string][], te
 export function createWorld(data: any, opts: { userTeam: string; mode: 'career' | 'sandbox'; gmName: string; seed?: string }): World {
   const seed = opts.seed || `NBA-${Date.now().toString(36)}`;
   const players: Record<string, Player> = {};
+  setEraYear(1976);
+  const useClasses = !!classData();
   for (const p of data.players as Player[]) {
+    if (useClasses && p.kind === 'prospect' && p.draftClass) continue; // classes.json supersedes the 1977-80 classes in the base pack
     players[p.id] = { ...p, injury: null, stats: [], awards: [], morale: 60, fatigueSeason: 0 };
     players[p.id].ovr = Math.round(playerValue(players[p.id]));
   }
@@ -46,7 +52,7 @@ export function createWorld(data: any, opts: { userTeam: string; mode: 'career' 
   const world: World = {
     meta: { saveId: `save-${seed}`, title: `${opts.gmName} — ${teams[opts.userTeam].city} ${teams[opts.userTeam].name}`, seed, created: new Date().toISOString(),
       modelVersion: MODEL_VERSION, dataVersion: data.version, schema: SCHEMA, mode: opts.mode, gmName: opts.gmName, userTeam: opts.userTeam, abaSurvivors: [] },
-    rules: data.rules, anchors: data.anchors, teams, players, coaches, freeAgents: [...data.freeAgents], draftClasses: data.draftClasses,
+    rules: data.rules, anchors: data.anchors, teams, players, coaches, freeAgents: [...data.freeAgents], draftClasses: useClasses ? {} : data.draftClasses,
     schedules: data.schedules, franchiseEvents: data.franchiseEvents,
     season: { year: 1976, phase: 'preseason', day: '1976-10-18', games: [], playoffs: null, draft: null },
     pastSeasons: [], messages: [], news: [], events: [],
@@ -54,6 +60,7 @@ export function createWorld(data: any, opts: { userTeam: string; mode: 'career' 
     clock: 'Contending', gmRep: 50, scoutBudget: 2, log: { seq: 0 }, tradeHistory: [], promises: [],
   };
   world.season.games = buildSchedule(1976, data.schedules['1976'], teams, {});
+  if (useClasses) injectClass(world, 1977);
   // franchise clocks + owner expectations from projected strength
   const proj = projectedWins(world);
   for (const id in teams) teams[id].clock = proj[id] >= 50 ? 'Win Now' : proj[id] >= 43 ? 'Contending' : proj[id] >= 36 ? 'Building' : 'Rebuilding';

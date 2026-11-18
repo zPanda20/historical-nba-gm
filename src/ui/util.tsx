@@ -6,8 +6,29 @@ import { hashStr } from '../sim/rng';
 import { believedOvr } from '../sim/trade';
 import { sdFor } from '../sim/needs';
 import { ui, setUI } from './store';
+import { LOGO_FILES } from '../sim/history';
 
-export const logoUrl = (t: Team | string) => `assets/logos/${typeof t === 'string' ? t : t.abbr}.png`;
+/** Team logo: the shipped file for this identity, or a generated badge in the team's colours when none exists. */
+const badgeCache = new Map<string, string>();
+export function badgeUrl(abbr: string, colors: string[] = ['#3a3f4b', '#c9a227', '#ffffff'], name = '') {
+  const key = `${abbr}|${colors.join(',')}|${name}`;
+  const hit = badgeCache.get(key); if (hit) return hit;
+  const [c1, c2, c3] = [colors[0] ?? '#333', colors[1] ?? '#ccc', colors[2] ?? '#fff'];
+  const light = (h: string) => { const n = parseInt(h.replace('#', ''), 16); return ((n >> 16) * 299 + ((n >> 8) & 255) * 587 + (n & 255) * 114) / 1000 > 150; };
+  const ink = light(c1) ? '#111' : '#fff';
+  const word = (name || '').toUpperCase().slice(0, 14);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><circle cx="60" cy="60" r="56" fill="${c1}" stroke="${c2}" stroke-width="8"/><circle cx="60" cy="60" r="44" fill="none" stroke="${c3}" stroke-opacity=".55" stroke-width="2"/>`
+    + `<path d="M16 60h88M60 16v88" stroke="${c2}" stroke-opacity=".25" stroke-width="3"/><text x="60" y="${word ? 66 : 72}" text-anchor="middle" font-family="Oswald,Impact,Arial Narrow,sans-serif" font-weight="700" font-size="${abbr.length > 3 ? 30 : 38}" fill="${ink}" letter-spacing="1">${abbr}</text>`
+    + (word ? `<text x="60" y="88" text-anchor="middle" font-family="Oswald,Arial Narrow,sans-serif" font-size="11" fill="${ink}" fill-opacity=".8" letter-spacing="1.5">${word}</text>` : '') + `</svg>`;
+  const url = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+  badgeCache.set(key, url);
+  return url;
+}
+export const logoUrl = (t: Team | string) => {
+  if (typeof t === 'string') return LOGO_FILES.has(t) ? `assets/logos/${t}.png` : badgeUrl(t);
+  const key = t.logoKey ?? t.abbr;
+  return LOGO_FILES.has(key) ? `assets/logos/${key}.png` : badgeUrl(t.abbr, t.colors, t.name);
+};
 export const ht = (inches: number) => `${Math.floor(inches / 12)}'${Math.round(inches % 12)}"`;
 export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];

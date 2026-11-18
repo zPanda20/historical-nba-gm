@@ -1,5 +1,6 @@
 import { useStore, openModal, commit, toast } from '../store';
-import { Panel, Btn, Logo, ht, Chip, PlayerTile } from '../util';
+import { Panel, Btn, Logo, ht, Chip, PlayerTile, Tabs, curTab } from '../util';
+import { DraftRecap } from '../Showcase';
 import { draftToMyPick, draftPlayer, autoDraftRest } from '../actions';
 import { scoutReport } from '../../sim/gm';
 import { scoutTrips, useScoutTrip } from '../../sim/needs';
@@ -36,12 +37,13 @@ export function Draft() {
     const cls = (w!.draftClasses[String(year)] ?? []).map(id => w!.players[id]).filter(p => p && !p.team && p.scout).sort((a, b) => b.scout!.pot.mid - a.scout!.pot.mid);
     const left = scoutTrips(w!).left;
     const picks = w!.teams[u].picks.filter(p => p.season === year).sort((a, b) => a.round - b.round);
+    const showRecap = !!S.draft?.done && curTab('draftscr', 'recap') === 'recap';
     return <div class="screen">
-      <div class="screen-h"><h2>Draft & Scouting</h2><div class="screen-meta">{year} class · Our picks: {picks.map(p => `R${p.round}${p.original !== u ? ` (${p.original})` : ''}`).join(', ') || 'none'} · Scout trips left this week: {left}</div></div>
-      <Panel class="fill" title={`${year} draft board · ${cls.length} prospects`} right={<span class="muted">Ranges are our department's beliefs — not the truth. More reports narrow them.</span>}>
+      <div class="screen-h"><h2>Draft & Scouting</h2>{S.draft?.done && <Tabs id="draftscr" def="recap" tabs={[{ id: 'recap', label: `${S.draft.year} recap` }, { id: 'board', label: `${year} board` }]} />}<div class="screen-meta">{year} class · Our picks: {picks.map(p => `R${p.round}${p.original !== u ? ` (${p.original})` : ''}`).join(', ') || 'none'} · Scout trips left this week: {left}</div></div>
+      {showRecap ? <Panel class="fill recap-panel"><DraftRecap w={w!} /></Panel> : <Panel class="fill" title={`${year} draft board · ${cls.length} prospects`} right={<span class="muted">Ranges are our department's beliefs — not the truth. More reports narrow them.</span>}>
         <table class="tbl rows"><thead><tr><th class="l" colSpan={2}>Prospect</th><th>Pos</th><th>Age</th><th>Ht</th><th>Now</th><th>Ceiling</th><th>Rpts</th><th></th></tr></thead>
           <tbody>{cls.slice(0, 120).map(p => <ProspectRow w={w!} p={p} action={<Btn kind="sm ghost" disabled={left <= 0} onClick={() => { useScoutTrip(w!); scoutReport(w!, p.id); commit(); toast(`Report filed on ${p.name}.`); }}>Send a scout</Btn>} />)}</tbody></table>
-      </Panel>
+      </Panel>}
     </div>;
   }
   const D = S.draft;

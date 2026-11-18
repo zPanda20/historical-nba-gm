@@ -20,7 +20,7 @@ export function Settings() {
           <h4>Controls</h4>
           <p>Arrow keys move the selection, Enter chooses. Number keys 1–8 jump between sections. Tab opens the most urgent call on your desk. Space looks up to the rafters and back. Esc closes things and opens this menu. F toggles full screen.</p>
           <h4>About this alpha</h4>
-          <p>Alpha 0.1 covers the 1976–77 season, the playoffs, the 1977 draft and free agency into 1977–78. Results come from a possession-by-possession simulation tuned to 1976–77 league numbers; nothing is scripted. The game autosaves in this browser — export a save file to keep a backup.</p>
+          <p>Alpha 0.5 runs from 1976–77 to 2040: the real league calendar (moves, new names and logos, expansion, realignment, lockouts), era playoff and lottery formats, and real draft classes through 2026. Results come from a possession-by-possession simulation tuned to each era's league numbers; nothing is scripted. The game autosaves in this browser — export a save file to keep a backup.</p>
           <p class="muted small">Save: {w!.meta.title} · seed {w!.meta.seed} · model {MODEL_VERSION} · data {w!.meta.dataVersion}</p>
         </div>
       </div>
