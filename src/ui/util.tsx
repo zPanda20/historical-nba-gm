@@ -44,8 +44,13 @@ export function Logo({ t, size = 48, class: cls = '' }: { t: Team | string; size
   return <img class={`logo ${cls}`} src={logoUrl(t)} style={{ width: size, height: size }} alt="" draggable={false} />;
 }
 
+/** NBA person ids that have a photo in assets/headshots (filled at boot from index.json). */
+export const HEADSHOTS = new Set<number>();
+export async function loadHeadshotIndex() {
+  try { const r = await fetch('assets/headshots/index.json'); if (r.ok) for (const id of await r.json()) HEADSHOTS.add(id); } catch { /* no photos: initials are fine */ }
+}
 export function Headshot({ p, size = 64, class: cls = '' }: { p: Player; size?: number; class?: string }) {
-  if (p.headshot && p.nbaId) return <div class={`hs ${cls}`} style={{ width: size, height: size }}><img src={`assets/headshots/${p.nbaId}.webp`} alt="" draggable={false} /></div>;
+  if (p.nbaId && (p.headshot || HEADSHOTS.has(p.nbaId))) return <div class={`hs ${cls}`} style={{ width: size, height: size }}><img src={`assets/headshots/${p.nbaId}.webp`} alt="" draggable={false} /></div>;
   const ini = p.name.split(' ').map(s => s[0]).join('').slice(0, 2);
   return <div class={`hs hs-blank ${cls}`} style={{ width: size, height: size, fontSize: size * 0.34 }}><span>{ini}</span></div>;
 }

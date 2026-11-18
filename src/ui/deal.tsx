@@ -7,6 +7,7 @@ import { fmt$ } from '../sim/gm';
 import { Logo, PlayerTile, seenOvr } from './util';
 
 export function PickChip({ pk, owner }: { pk: PickRef; owner: string }) {
+  if (pk.no) return <span class="pick-chip live"><Logo t={pk.original} size={18} /><b>No. {pk.no} pick</b> tonight{pk.original !== owner ? <small> via {pk.original}</small> : null}</span>;
   return <span class="pick-chip"><Logo t={pk.original} size={18} /><b>{pk.season}</b> {pk.round === 1 ? '1st round' : pk.round === 2 ? '2nd round' : `Round ${pk.round}`}{pk.original !== owner ? <small> via {pk.original}</small> : null}</span>;
 }
 

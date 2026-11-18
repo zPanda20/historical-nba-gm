@@ -17,10 +17,21 @@ export const LOGO_FILES = new Set([
   'ATL', 'BOS', 'BUF', 'CHI', 'CLE', 'DEN', 'DET', 'GSW', 'HOU', 'IND', 'KCK', 'LAL', 'MIL', 'NJN', 'NOJ', 'NYK', 'NYN', 'PHI', 'PHX', 'POR', 'SAS', 'SEA', 'WSB',
   'KEN', 'PIT', 'STL', 'VIR',
   'PHI-1977', 'DET-1978', 'NJN-1978', 'UTA-1979', 'CHH-1988', 'MIA-1988', 'MIN-1989', 'ORL-1989', 'TOR-1995', 'SEA-1995', 'MIA-1999', 'LAL-2001',
-  'ORL-2001', 'CHA-2004', 'MIN-2008', 'ORL-2011', 'CHA-2012', 'CHA-2014', 'MIL-2015', 'MIN-2017', 'GSW-2019', 'TOR-2020', 'ORL-2025', 'MIN-2026',
+  'ORL-2001', 'CHA-2004', 'ATL-1995', 'ATL-2007', 'BOS-1996', 'NJN-1990', 'NJN-1997', 'CLE-1983', 'CLE-1994', 'CLE-2003', 'CLE-2010', 'DAL', 'DAL-1993', 'DAL-2001', 'MIN-2008', 'ORL-2011', 'CHA-2012', 'CHA-2014', 'MIL-2015', 'MIN-2017', 'GSW-2019', 'TOR-2020', 'ORL-2025', 'MIN-2026',
 ]);
 
 export const IDENTITY_EVENTS: IdentityEvent[] = [
+  { season: 1983, team: 'CLE', type: 'rebrand', logo: 'CLE-1983', note: 'The Cavaliers switch to the "Cavs" wordmark logo.' },
+  { season: 1990, team: 'NYN', type: 'rebrand', logo: 'NJN-1990', note: 'The Nets unveil a new red, white and blue logo.' },
+  { season: 1993, team: 'DAL', type: 'rebrand', logo: 'DAL-1993', note: 'The Mavericks update their logo.' },
+  { season: 1994, team: 'CLE', type: 'rebrand', logo: 'CLE-1994', note: 'The Cavaliers change colours and logo.' },
+  { season: 1995, team: 'ATL', type: 'rebrand', logo: 'ATL-1995', note: 'The Hawks introduce a new logo.' },
+  { season: 1996, team: 'BOS', type: 'rebrand', logo: 'BOS-1996', note: 'The Celtics refresh Lucky for the 50th anniversary.' },
+  { season: 1997, team: 'NYN', type: 'rebrand', logo: 'NJN-1997', note: 'The Nets adopt a new navy and red logo.' },
+  { season: 2001, team: 'DAL', type: 'rebrand', logo: 'DAL-2001', note: 'The Mavericks unveil the horse-head logo.' },
+  { season: 2003, team: 'CLE', type: 'rebrand', logo: 'CLE-2003', note: 'The Cavaliers return to wine and gold.' },
+  { season: 2007, team: 'ATL', type: 'rebrand', logo: 'ATL-2007', note: 'The Hawks update their logo.' },
+  { season: 2010, team: 'CLE', type: 'rebrand', logo: 'CLE-2010', note: 'The Cavaliers refresh their logo.' },
   { season: 1977, team: 'NYN', type: 'relocation', city: 'New Jersey', name: 'Nets', abbr: 'NJN', logo: 'NJN', arena: 'Rutgers Athletic Center', note: 'The Nets leave Long Island for New Jersey.' },
   { season: 1977, team: 'PHI', type: 'rebrand', logo: 'PHI-1977', note: 'The 76ers unveil a new logo.' },
   { season: 1978, team: 'BUF', type: 'relocation', city: 'San Diego', name: 'Clippers', abbr: 'SDC', logo: 'SDC', colors: ['#E03A3E', '#1D428A', '#FFFFFF'], arena: 'San Diego Sports Arena', note: 'The Buffalo franchise moves west and becomes the San Diego Clippers.' },

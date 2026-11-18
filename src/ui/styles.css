@@ -838,3 +838,32 @@ ul.read li.bad::before { content: '×'; color: var(--danger); }
 .offs-l { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .offs-c { display: flex; gap: 14px; align-items: center; background: rgba(0, 0, 0, .3); border-radius: 6px; padding: 12px; opacity: 0; animation: copyUp .5s ease-out forwards; }
 .offs-c b { display: block; font: 24px/1.05 var(--disp); } .offs-c span { color: var(--muted); font-size: 15px; }
+
+/* ---------- pass 6: league history tiles ---------- */
+.hist { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
+.hist-h { display: flex; align-items: baseline; gap: 16px; font: 600 15px var(--label); letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+.hist-h b { color: var(--ta); } .hist-h em { margin-left: auto; font-style: normal; text-transform: none; letter-spacing: 0; font-size: 14px; }
+.hist-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; overflow: auto; min-height: 0; padding: 2px 4px 12px 2px; align-content: start; }
+.hist-tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px 12px 12px; border-radius: 6px; text-align: center; overflow: hidden;
+  background: linear-gradient(170deg, color-mix(in srgb, var(--c1) 45%, #1a120e) 0%, #1a120e 70%); border: 1px solid color-mix(in srgb, var(--c2) 35%, transparent);
+  box-shadow: inset 0 3px 0 var(--c1), 0 4px 10px rgba(0, 0, 0, .35); transition: transform .12s ease, box-shadow .12s ease; }
+.hist-tile:hover, .hist-tile:focus-visible { transform: translateY(-2px); box-shadow: inset 0 3px 0 var(--c1), 0 0 0 2px var(--ta), 0 8px 18px rgba(0, 0, 0, .45); }
+.hist-tile.me::after { content: 'Ours'; position: absolute; top: 8px; right: -24px; transform: rotate(35deg); background: var(--ta); color: var(--on-ta); font: 700 11px var(--label); letter-spacing: 1px; text-transform: uppercase; padding: 2px 28px; }
+.ht-year { font: 20px var(--bulb); color: var(--gold); }
+.ht-team { font: 600 18px/1.1 var(--label); }
+.ht-mvp { font-size: 13px; color: var(--muted); border-top: 1px solid rgba(255, 255, 255, .08); padding-top: 6px; width: 100%; }
+.season-modal .modal { max-width: 1080px; }
+.season-card .sc-head { display: flex; gap: 22px; align-items: center; padding: 6px 4px 16px; border-bottom: 1px solid rgba(242, 182, 50, .2); margin-bottom: 14px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--c1) 30%, transparent), transparent 70%); border-radius: 6px; }
+.sc-head span { font: 600 14px var(--label); letter-spacing: 2px; text-transform: uppercase; color: var(--gold); }
+.sc-head h2 { font: 44px/1 var(--disp); margin: 4px 0 6px; } .sc-head p { margin: 2px 0; font-size: 15px; }
+.sc-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.sc-aw { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 10px 12px; border-radius: 5px; background: rgba(0, 0, 0, .28); border: 1px solid rgba(242, 182, 50, .12); }
+.sc-aw small, .sc-team small { font: 600 12px var(--label); letter-spacing: 1.4px; text-transform: uppercase; color: var(--gold); }
+.sc-who { display: flex; gap: 10px; align-items: center; } .sc-who b { display: block; font: 600 18px var(--label); } .sc-who em { display: flex; align-items: center; gap: 4px; font-style: normal; font-size: 13px; color: var(--muted); }
+.sc-teams { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.sc-team { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 5px; background: rgba(255, 255, 255, .03); }
+.sc-team div { display: flex; flex-wrap: wrap; gap: 6px; } .sc-team button { padding: 3px 8px; border-radius: 3px; background: rgba(255, 255, 255, .06); font-size: 14px; }
+.pick-chip.live { box-shadow: inset 0 0 0 1px var(--ta); }
+.d-o .via { color: var(--muted); font-size: 11px; }
+.pick-chip.live { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }

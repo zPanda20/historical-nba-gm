@@ -1,6 +1,7 @@
 import { useStore, openModal, commit, toast } from '../store';
 import { Panel, Btn, Logo, ht, Chip, PlayerTile, Tabs, curTab } from '../util';
 import { DraftRecap } from '../Showcase';
+import { runCommand } from '../actions';
 import { draftToMyPick, draftPlayer, autoDraftRest } from '../actions';
 import { scoutReport } from '../../sim/gm';
 import { scoutTrips, useScoutTrip } from '../../sim/needs';
@@ -58,10 +59,11 @@ export function Draft() {
     <div class="draft">
       <Panel title="Draft order" class="d-order">
         {D.order.slice(Math.max(0, D.idx - 6), D.idx + 18).map(o => <div class={`d-o ${o === slot ? 'now' : ''} ${o.team === u ? 'mine' : ''}`}>
-          <span class="d-n">{o.pick}</span><Logo t={w!.teams[o.team]} size={22} /><span>{w!.teams[o.team].abbr}</span><span class="d-p">{o.player ? w!.players[o.player].name : o === slot ? 'On the clock' : ''}</span></div>)}
+          <span class="d-n">{o.pick}</span><Logo t={w!.teams[o.team]} size={22} /><span>{w!.teams[o.team].abbr}{o.original && o.original !== o.team && w!.teams[o.original] ? <small class="via"> via {w!.teams[o.original].abbr}</small> : null}</span><span class="d-p">{o.player ? w!.players[o.player].name : o === slot ? 'On the clock' : ''}</span></div>)}
       </Panel>
       <Panel class="fill" title={onClock ? "You're on the clock" : 'Our board'} right={<div class="row-btns">
         {!onClock && <Btn kind="big" auto onClick={draftToMyPick}>Sim to our pick</Btn>}
+        <Btn kind="ghost" onClick={() => runCommand({ id: 'draft-trade', read: true } as any, { label: '', cmd: 'tradeFinder', arg: { other: Object.keys(w!.teams).find(id => id !== u && D.order.slice(D.idx).some(o => o.team === id)) ?? Object.keys(w!.teams).find(id => id !== u), give: [], get: [], givePicks: [], getPicks: [] } })}>Trade picks</Btn>
         <Btn kind="ghost" onClick={() => { if (confirm('Let the scouts make the rest of our picks from our board?')) autoDraftRest(); }}>Auto-draft the rest</Btn></div>}>
         <table class="tbl rows"><thead><tr><th class="l" colSpan={2}>Prospect</th><th>Pos</th><th>Age</th><th>Ht</th><th>Now</th><th>Ceiling</th><th>Rpts</th><th></th></tr></thead>
           <tbody>{board.slice(0, 60).map((p, i) => <ProspectRow w={w!} p={p} action={onClock ? <Btn kind={i === 0 ? 'sm' : 'sm ghost'} auto={i === 0} onClick={() => draftPlayer(p.id)}>Draft</Btn> : null} />)}</tbody></table>

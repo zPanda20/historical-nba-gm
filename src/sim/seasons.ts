@@ -33,6 +33,14 @@ export function applyIdentityEvents(world: World, season: number) {
   }
 }
 export function teamLogoKey(t: Team) { return t.logoKey ?? t.abbr; }
+/** Older saves: bring every team's logo up to date with the calendar (new logo files arrive between versions). */
+export function syncLogos(world: World) {
+  for (const t of Object.values(world.teams)) {
+    const ev = IDENTITY_EVENTS.filter(e => e.team === t.id && e.logo && e.season <= world.season.year).sort((a, b) => a.season - b.season).pop();
+    if (ev?.logo) t.logoKey = ev.logo;
+    else if (t.id === 'DAL' && (!t.logoKey || !LOGO_FILES.has(t.logoKey))) t.logoKey = 'DAL';
+  }
+}
 export function hasLogoFile(key: string) { return LOGO_FILES.has(key); }
 
 // ------------------------------------------------------------------ coaches
@@ -198,7 +206,7 @@ export function injectUndrafted(world: World, season: number) {
   world.franchiseEvents.push({ season, type: tag, done: true });
   const rows: any[] = CLASS_DATA?.undrafted?.[String(season)] ?? [];
   let n = 0;
-  if (rows.length >= 5) {
+  if (season <= 2026 && CLASS_DATA) {
     for (const c of rows) {
       if (world.players[c.id]) continue;
       const p = decode(world, c, season, 'undrafted');

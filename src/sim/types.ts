@@ -85,7 +85,7 @@ export type Phase = 'preseason' | 'regular' | 'playoffs' | 'draft' | 'freeagency
 export interface Series { id: string; round: number; conf: string; hi: string; lo: string; wHi: number; wLo: number; bestOf: number; winner?: string; games: string[]; slot?: number; }
 export interface PlayoffState { round: number; series: Series[]; seeds?: Record<string, string[]>; format?: { teams: number; byes: boolean; playIn: boolean; bestOf: number[] }; }
 
-export interface DraftState { year: number; order: { pick: number; round: number; team: string; player?: string; jump?: number }[]; idx: number; pool: string[]; board: string[]; lottery?: { kind: string; text: string; results: { team: string; pick: number; pre: number; odds?: number }[] }; done?: boolean; }
+export interface DraftState { year: number; order: { pick: number; round: number; team: string; original?: string; player?: string; jump?: number }[]; idx: number; pool: string[]; board: string[]; lottery?: { kind: string; text: string; results: { team: string; pick: number; pre: number; odds?: number }[] }; done?: boolean; }
 
 export interface Owner { name: string; patience: number; wantsWins: number; budget: number; satisfaction: number; expectedWins: number; objective: string; }
 
@@ -103,7 +103,7 @@ export interface World {
   schedules: Record<string, [string, string, string][]>;
   franchiseEvents: any[];
   season: Season;
-  pastSeasons: { year: number; champion: string; runnerUp?: string; awards: Record<string, any>; standings: { team: string; w: number; l: number }[]; names?: Record<string, { abbr: string; city: string; name: string; logo: string }> }[];
+  pastSeasons: { year: number; champion: string; runnerUp?: string; awards: Record<string, any>; standings: { team: string; w: number; l: number }[]; names?: Record<string, { abbr: string; city: string; name: string; logo: string }>; finals?: string }[];
   messages: Message[];
   news: NewsItem[];
   events: WorldEvent[];

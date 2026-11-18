@@ -329,6 +329,18 @@ export function perGame(p: Player, season: number, playoffs = false) {
     fgp: t.fga ? t.fgm / t.fga : 0, ftp: t.fta ? t.ftm / t.fta : 0, team: ls.slice(-1)[0]?.team };
 }
 
+/** Scoring title: best points per game among qualified players (about 85% of the schedule, or the era's points floor). */
+export function scoringTitle(world: World, y: number): { id: string; ppg: number } | null {
+  const G = eraRules(y).games;
+  let best: { id: string; ppg: number } | null = null;
+  for (const p of Object.values(world.players)) {
+    const s = perGame(p, y);
+    if (!s.g || !(s.g >= Math.round(G * 0.85) || s.pts >= Math.round(1400 * G / 82))) continue;
+    if (!best || s.ppg > best.ppg) best = { id: p.id, ppg: s.ppg };
+  }
+  return best;
+}
+
 function computeAwards(world: World) {
   const y = world.season.year;
   const G = eraRules(y).games;
@@ -365,7 +377,8 @@ function computeAwards(world: World) {
     fmvp = Object.entries(tally).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
   }
   const coy = Object.values(world.teams).map(t => ({ t, d: (t.w - (projectedWinsCache[t.id] ?? G / 2)) })).sort((a, b) => b.d - a.d)[0];
-  const aw: Record<string, any> = { MVP: mvp[0]?.p.id, 'Finals MVP': fmvp, ROY: roy[0]?.p.id, DPOY: dpoy, '6MOY': sixth, MIP: mip, 'All-NBA 1st': first, 'All-NBA 2nd': second, 'All-NBA 3rd': third, 'All-Defensive': allDef, COY: null };
+  const st = scoringTitle(world, y);
+  const aw: Record<string, any> = { MVP: mvp[0]?.p.id, 'Finals MVP': fmvp, 'Scoring title': st?.id ?? null, ROY: roy[0]?.p.id, DPOY: dpoy, '6MOY': sixth, MIP: mip, 'All-NBA 1st': first, 'All-NBA 2nd': second, 'All-NBA 3rd': third, 'All-Defensive': allDef, COY: null };
   for (const k of Object.keys(aw)) if (aw[k] == null || (Array.isArray(aw[k]) && !aw[k].length)) delete aw[k];
   const coyName = coy ? world.coaches[world.teams[coy.t.id].coach]?.name : null;
   for (const [k, v] of Object.entries(aw)) {
@@ -375,6 +388,7 @@ function computeAwards(world: World) {
     }
   }
   aw.COY = coyName; if (coy) aw.COYteam = coy.t.id;
+  if (st) aw.scoringPPG = Math.round(st.ppg * 10) / 10;
   if (aw.MVP) addNews(world, `${world.players[aw.MVP].name} named MVP`, `Voting is simulated from this season's games, not history.`, 'awards');
   if (aw.ROY) addNews(world, `${world.players[aw.ROY].name} is Rookie of the Year`, '', 'awards');
   world.season.awards = aw;
@@ -389,7 +403,8 @@ function endSeason(world: World, runnerUp: string) {
     const res = S.champion === t.id ? 'Champion' : runnerUp === t.id ? 'Finals' : po.has(t.id) ? 'Playoffs' : 'Missed playoffs';
     t.history.push({ season: S.year, w: t.w, l: t.l, result: res, ...(t.abbr ? { abbr: t.abbr, name: `${t.city} ${t.name}` } : {}) } as any);
   }
-  world.pastSeasons.push({ year: S.year, champion: S.champion!, runnerUp, awards: S.awards ?? {}, standings: standings(world).map(t => ({ team: t.id, w: t.w, l: t.l })),
+  const fin = S.playoffs?.series.find(x => x.round === 4);
+  world.pastSeasons.push({ year: S.year, champion: S.champion!, runnerUp, finals: fin ? `${Math.max(fin.wHi, fin.wLo)}–${Math.min(fin.wHi, fin.wLo)}` : undefined, awards: S.awards ?? {}, standings: standings(world).map(t => ({ team: t.id, w: t.w, l: t.l })),
     names: Object.fromEntries(Object.values(world.teams).map(t => [t.id, { abbr: t.abbr, city: t.city, name: t.name, logo: t.logoKey ?? t.abbr }])) } as any);
   ownerSeasonReview(world);
   setupDraft(world);
@@ -462,7 +477,7 @@ export function setupDraft(world: World) {
   if (newTeams.length) order1.splice(Math.min(order1.length, R.lottery === 'coinflip' ? 2 : 4), 0, ...newTeams);
   addNews(world, `${year} draft order set`, text, 'draft');
   const rounds = R.draftRounds;
-  const order: { pick: number; round: number; team: string; jump?: number }[] = [];
+  const order: { pick: number; round: number; team: string; original?: string; jump?: number }[] = [];
   let n = 1;
   for (let r = 1; r <= rounds; r++) {
     const ro = r === 1 ? order1 : [...newTeams, ...order1.filter(id => !newTeams.includes(id))];
@@ -472,7 +487,7 @@ export function setupDraft(world: World) {
       let owner = tid;
       for (const t of Object.values(world.teams)) { const q = t.picks.find(p => p.season === year && p.round === r && p.original === tid); if (q) owner = q.owner; }
       const pre = r === 1 ? results.find(x => x.team === tid)?.pre : undefined;
-      order.push({ pick: n++, round: r, team: owner, ...(r === 1 && pre ? { jump: pre - (order.length + 1) } : {}) });
+      order.push({ pick: n++, round: r, team: owner, original: tid, ...(r === 1 && pre ? { jump: pre - (order.length + 1) } : {}) });
     }
     void ro;
   }

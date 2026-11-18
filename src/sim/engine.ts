@@ -83,7 +83,8 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
   const ST = eraStyle(world.season.year, world.meta.seed);
   const paceK = Math.pow(106.5 / ST.pace, CAL.paceExp) * (1 - 0.025 * clamp((world.season.year - 1980) / 10, 0, 1));
   const threeShare = rules.three ? ST.tpa / (ST.pace * 0.88) : 0;
-  const p3 = clamp(threeShare / CAL.threeElig * CAL.threeK * (0.77 + Math.max(0, threeShare - 0.2) * 1.2), 0, 0.97);
+  // early-80s shooters rarely let it fly; their ratings carry little three-point signal, so the era nudge is bigger
+  const p3 = clamp(threeShare / CAL.threeElig * CAL.threeK * (0.77 + Math.max(0, threeShare - 0.2) * 1.2) * (1 + 0.5 * clamp((1987 - world.season.year) / 8, 0, 1)), 0, 0.97);
   const base3 = threeBase(world.season.year, ER.threeShort);
   const two = twoEra(world.season.year) * CAL.twoK;
   const tovE = tovEra(world.season.year);

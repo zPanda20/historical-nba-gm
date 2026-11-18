@@ -3,7 +3,7 @@ import { useStore, openModal, commit, toast, ui, setUI } from '../store';
 import { place, Panel, Btn, Tabs, curTab, Logo, OvrBadge, Chip, Meter, dateShort, injuryChip, PlayerTile, SortTable, seenOvr } from '../util';
 import { rightsOk, evaluateTrade, executeTrade, fmt$, payroll, marketSalary, tradeLegal } from '../../sim/gm';
 import type { TradeReply } from '../../sim/gm';
-import { gmProfile, patience, phoneOpen } from '../../sim/trade';
+import { gmProfile, patience, phoneOpen, tradablePicks, pickKey } from '../../sim/trade';
 import { openRequest, needDef, seenRating } from '../../sim/needs';
 import { TradeCard, ReqPanel } from '../deal';
 import { playerValue } from '../../sim/coach';
@@ -11,7 +11,7 @@ import type { World, Player } from '../../sim/types';
 import { ClockPicker } from '../Modals';
 
 type PK = { season: number; round: number; original: string };
-const pkKey = (p: PK) => `${p.season}-${p.round}-${p.original}`;
+const pkKey = (p: PK) => pickKey(p as any);
 
 function TradeFinder({ w }: { w: World }) {
   const u = w.meta.userTeam;
@@ -22,10 +22,10 @@ function TradeFinder({ w }: { w: World }) {
   const O = w.teams[d.other], U = w.teams[u];
   const S = w.season;
   const closed = tradeLegal(w, { ...d, give: ['x'], get: ['y'] } as any);
-  const closedHard = closed && /deadline|playoffs|draft/.test(closed) ? closed : null;
+  const closedHard = closed && /deadline|playoffs/.test(closed) ? closed : null;
   const toggle = (k: 'give' | 'get', id: string) => set({ [k]: d[k].includes(id) ? d[k].filter((x: string) => x !== id) : [...d[k], id] });
-  const toggleP = (k: 'givePicks' | 'getPicks', p: PK) => set({ [k]: d[k].some((x: PK) => pkKey(x) === pkKey(p)) ? d[k].filter((x: PK) => pkKey(x) !== pkKey(p)) : [...d[k], { season: p.season, round: p.round, original: p.original }] });
-  const picks = (tid: string) => w.teams[tid].picks.filter(p => p.season > S.year && p.round <= 2 && !(S.phase === 'draft' && p.season === S.year + 1)).sort((a, b) => a.season - b.season || a.round - b.round);
+  const toggleP = (k: 'givePicks' | 'getPicks', p: PK) => set({ [k]: d[k].some((x: PK) => pkKey(x) === pkKey(p)) ? d[k].filter((x: PK) => pkKey(x) !== pkKey(p)) : [...d[k], { season: p.season, round: p.round, original: p.original, ...((p as any).no ? { no: (p as any).no } : {}) }] });
+  const picks = (tid: string) => tradablePicks(w, tid) as any[];
   const propose = () => setReply(evaluateTrade(w, d));
   const done = (offer: any) => {
     executeTrade(w, offer);
@@ -46,12 +46,12 @@ function TradeFinder({ w }: { w: World }) {
     <div class="tr-teams">{others.map(t => <button data-nav class={`tr-t ${t.id === d.other ? 'on' : ''}`} onClick={() => set({ other: t.id, get: [], getPicks: [] })}><Logo t={t} size={28} /><span>{place(t)}</span><small>{t.w}–{t.l}</small></button>)}</div>
     <Panel title={<><Logo t={U} size={26} /> Our roster</>} class="tr-col">
       {U.roster.map(id => w.players[id]).sort((a, b) => playerValue(b) - playerValue(a)).map(p => <PRow p={p} side="give" />)}
-      <div class="tr-picks">{picks(u).map(p => <button data-nav class={`pk ${d.givePicks.some((x: PK) => pkKey(x) === pkKey(p)) ? 'on' : ''}`} onClick={() => toggleP('givePicks', p)}>{p.season} {p.round === 1 ? '1st' : '2nd'}{p.original !== u ? ` (${p.original})` : ''}</button>)}</div>
+      <div class="tr-picks">{picks(u).map(p => <button data-nav class={`pk ${d.givePicks.some((x: PK) => pkKey(x) === pkKey(p)) ? 'on' : ''}`} onClick={() => toggleP('givePicks', p)}>{p.no ? <><b>No. {p.no}</b> tonight</> : <>{p.season} {p.round === 1 ? '1st' : '2nd'}</>}{p.original !== u ? ` (${p.original})` : ''}</button>)}</div>
     </Panel>
     <Panel title={<><Logo t={O} size={26} /> {O.city} {O.name}</>} class="tr-col">
       <GmCard w={w} tid={O.id} />
       {O.roster.map(id => w.players[id]).sort((a, b) => playerValue(b) - playerValue(a)).map(p => <PRow p={p} side="get" />)}
-      <div class="tr-picks">{picks(O.id).map(p => <button data-nav class={`pk ${d.getPicks.some((x: PK) => pkKey(x) === pkKey(p)) ? 'on' : ''}`} onClick={() => toggleP('getPicks', p)}>{p.season} {p.round === 1 ? '1st' : '2nd'}{p.original !== O.id ? ` (${p.original})` : ''}</button>)}</div>
+      <div class="tr-picks">{picks(O.id).map(p => <button data-nav class={`pk ${d.getPicks.some((x: PK) => pkKey(x) === pkKey(p)) ? 'on' : ''}`} onClick={() => toggleP('getPicks', p)}>{p.no ? <><b>No. {p.no}</b> tonight</> : <>{p.season} {p.round === 1 ? '1st' : '2nd'}</>}{p.original !== O.id ? ` (${p.original})` : ''}</button>)}</div>
     </Panel>
     <div class="tr-deal">
       {empty ? <div class="tr-empty"><b>Build a deal</b><p>Press + next to players and picks on either side. Your staff will tell you what they think of it before you call {O.gm}.</p></div>

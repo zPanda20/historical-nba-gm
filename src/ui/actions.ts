@@ -7,13 +7,15 @@ import { aiFreeAgency, executeTrade, evaluateTrade, requestCoach, releasePlayer,
 import { projectedWins } from '../sim/world';
 import { commit, getWorld, go, openModal, runBusy, setUI, setWorld, toast, ui } from './store';
 import { markShownNow } from './Showcase';
+import { aiDraftOffer } from '../sim/trade';
 import { setEraYear } from '../sim/history';
-import { setClassData, classData } from '../sim/seasons';
+import { setClassData, classData, syncLogos } from '../sim/seasons';
+import { HEADSHOTS, loadHeadshotIndex } from './util';
 
 let DATA: any = null;
 export async function loadData() {
   if (DATA) return DATA;
-  const [r, c] = await Promise.all([fetch('data/world1976.json'), classData() ? null : fetch('data/classes.json')]);
+  const [r, c] = await Promise.all([fetch('data/world1976.json'), classData() ? null : fetch('data/classes.json'), HEADSHOTS.size ? null : loadHeadshotIndex()]);
   DATA = await r.json();
   if (c) { try { setClassData(await c.json()); } catch (e) { console.error('draft classes unavailable; later classes will be generated', e); } }
   return DATA;
@@ -30,6 +32,7 @@ export function startNewGame(data: any, opts: { userTeam: string; mode: 'career'
 export function enterLoaded(w: World) {
   setEraYear(w.season.year);
   if (!(w as any).shown) markShownNow(w);
+  syncLogos(w);
   tidyMessages(w);
   Object.assign(projectedWinsCache, projectedWins(w));
   setWorld(w);
@@ -146,6 +149,7 @@ export function draftToMyPick() {
   if (!w.season.draft) return;
   const r = runDraftUntilUser(w, delegated(w, 'draft'));
   tidyMessages(w);
+  if (r === 'user' && aiDraftOffer(w)) toast('Phone call: a team wants to trade up to our pick. Press Tab.');
   commit();
   if (r === 'done') toast('The draft is complete. Free agency is open.');
 }
@@ -158,6 +162,7 @@ export function draftPlayer(pid: string) {
   toast(`With pick #${pick.pick}, we select ${w.players[pid].name}.`);
   const r = runDraftUntilUser(w, false);
   tidyMessages(w);
+  if (r === 'user' && aiDraftOffer(w)) toast('Phone call: a team wants to trade up to our pick. Press Tab.');
   commit();
   if (r === 'done') toast('The draft is complete. Free agency is open.');
 }

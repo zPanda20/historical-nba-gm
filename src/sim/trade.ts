@@ -8,7 +8,7 @@ import { potentialOvr, projectedWins, addEvent, addNews, addMessage } from './wo
 import { clockWeights, marketSalary, payroll, fmt$, TRADE_DEADLINE } from './gm';
 import { staffSd, unitErr, sdFor } from './needs';
 
-export interface PickRef { season: number; round: number; original: string }
+export interface PickRef { season: number; round: number; original: string; no?: number }
 export interface TradeOffer { other: string; give: string[]; get: string[]; givePicks: PickRef[]; getPicks: PickRef[]; }
 
 // ------------------------------------------------------------------ GM personalities and patience
@@ -69,7 +69,35 @@ export function assetValue(w: World, p: Player, forTeam: string, ovr = believedO
   return Math.max(0, v);
 }
 
+/** Pick numbers in the draft that is happening right now (unused slots only), as tradable refs. */
+export function liveDraftSlots(w: World, tid: string): PickRef[] {
+  const D = w.season.draft;
+  if (!D || D.done || w.season.phase !== 'draft') return [];
+  return D.order.slice(D.idx).filter(o => o.team === tid && !o.player && o.round <= 2)
+    .map(o => ({ season: D.year, round: o.round, original: (o as any).original ?? o.team, no: o.pick }));
+}
+/** Everything a team could put in a deal: live draft slots plus future picks. */
+export function tradablePicks(w: World, tid: string): PickRef[] {
+  const live = w.season.phase === 'draft' && w.season.draft && !w.season.draft.done ? w.season.draft.year : null;
+  const fut = w.teams[tid].picks.filter(p => p.season > w.season.year && p.round <= 2 && p.season !== live)
+    .map(p => ({ season: p.season, round: p.round, original: p.original }));
+  return [...liveDraftSlots(w, tid), ...fut.sort((a, b) => a.season - b.season || a.round - b.round)];
+}
+export const pickKey = (p: PickRef) => p.no ? `no${p.no}` : `${p.season}-${p.round}-${p.original}`;
+export function pickLabel(p: PickRef, owner?: string) {
+  if (p.no) return `No. ${p.no} pick (${p.season} R${p.round})${owner && p.original !== owner ? ` via ${p.original}` : ''}`;
+  return `${p.season} ${p.round === 1 ? '1st' : '2nd'}-round pick${owner && p.original !== owner ? ` (${p.original})` : ''}`;
+}
+
 export function pickValue(w: World, pk: PickRef, forTeam: string): number {
+  if (pk.no && w.season.draft) {
+    // a known slot in tonight's draft: value follows the slot, a little more for teams thinking about the future
+    const D = w.season.draft;
+    const r1 = D.order.filter(o => o.round === 1).length || 30;
+    const { fut } = clockWeights(w.teams[forTeam].clock);
+    const eq = pk.no <= r1 ? 61.5 - (pk.no - 1) * (12.5 / Math.max(1, r1 - 1)) : 47.5 - Math.min(10, (pk.no - r1) * 0.12);
+    return Math.max(0.3, conv(eq) * (0.6 + fut));
+  }
   const proj = projectedWins(w)[pk.original] ?? 41;
   const { fut } = clockWeights(w.teams[forTeam].clock);
   const eq = pk.round === 1 ? 53 + (41 - proj) * 0.4 : pk.round === 2 ? 47 : 42;
@@ -111,9 +139,19 @@ export function tradeLegal(w: World, offer: TradeOffer): string | null {
   const U = w.teams[w.meta.userTeam], O = w.teams[offer.other];
   if (S.phase === 'regular' && S.day > TRADE_DEADLINE(S.year)) return 'The trade deadline has passed.';
   if (S.phase === 'playoffs') return 'No trades during the playoffs.';
-  if (S.phase === 'draft') return 'Trades are frozen during the draft.';
+  if (S.phase === 'draft') {
+    const D = S.draft;
+    for (const pk of [...offer.givePicks, ...offer.getPicks]) {
+      if (!pk.no) continue;
+      const slot = D?.order.find(o => o.pick === pk.no);
+      if (!slot || slot.player) return `Pick No. ${pk.no} has already been made.`;
+    }
+    if (offer.givePicks.some(pk => pk.no && D?.order.find(o => o.pick === pk.no)?.team !== U.id)) return 'That pick is no longer ours.';
+    if (offer.getPicks.some(pk => pk.no && D?.order.find(o => o.pick === pk.no)?.team !== O.id)) return `${O.city} no longer own that pick.`;
+  }
+  const cap = S.phase === 'draft' || S.phase === 'freeagency' ? 15 : 13;
   const uAfter = U.roster.length - offer.give.length + offer.get.length, oAfter = O.roster.length - offer.get.length + offer.give.length;
-  if (uAfter > 13 || oAfter > 13) return 'That would leave a roster over the limit (12 + 1 temporary).';
+  if (uAfter > cap || oAfter > cap) return cap === 13 ? 'That would leave a roster over the limit (12 + 1 temporary).' : 'That would leave a roster over the offseason limit of 15.';
   if (uAfter < 8 || oAfter < 8) return 'That would leave a team with too few players.';
   if (!offer.give.length && !offer.givePicks.length) return 'You need to offer something.';
   if (!offer.get.length && !offer.getPicks.length) return 'Ask for something in return.';
@@ -169,11 +207,10 @@ export function evaluateTrade(w: World, offer: TradeOffer): TradeReply {
       const o = { ...offer, give: [...offer.give, id] }; const m = aiMargin(w, o).margin;
       if (m > 0.08 * scale && ok(o)) opts.push({ give: id, label: `add ${w.players[id].name}`, m });
     }
-    for (const pk of U.picks.filter(p => p.season > w.season.year && p.round <= 2)) {
-      const ref = { season: pk.season, round: pk.round, original: pk.original };
-      if (offer.givePicks.some(x => x.season === ref.season && x.round === ref.round && x.original === ref.original)) continue;
+    for (const ref of tradablePicks(w, U.id)) {
+      if (offer.givePicks.some(x => pickKey(x) === pickKey(ref))) continue;
       const o = { ...offer, givePicks: [...offer.givePicks, ref] }; const m = aiMargin(w, o).margin;
-      if (m > 0.08 * scale) opts.push({ givePick: ref, label: `add your ${ref.season} ${ref.round === 1 ? '1st' : '2nd'}-round pick${ref.original !== U.id ? ` (from ${ref.original})` : ''}`, m });
+      if (m > 0.08 * scale) opts.push({ givePick: ref, label: `add ${ref.no ? `the No. ${ref.no} pick` : `your ${ref.season} ${ref.round === 1 ? '1st' : '2nd'}-round pick${ref.original !== U.id ? ` (from ${ref.original})` : ''}`}`, m });
     }
     if (offer.get.length > 1 || offer.getPicks.length) for (const id of offer.get) {
       const o = { ...offer, get: offer.get.filter(x => x !== id) }; const m = aiMargin(w, o).margin;
@@ -225,9 +262,10 @@ export function executeTradeBetween(w: World, aId: string, bId: string, aGives: 
   const move = (from: typeof A, to: typeof A, pk: PickRef) => {
     const p = from.picks.find(x => x.season === pk.season && x.round === pk.round && x.original === pk.original);
     if (p) { from.picks = from.picks.filter(x => x !== p); to.picks.push({ ...p, owner: to.id }); }
+    if (pk.no && w.season.draft) { const slot = w.season.draft.order.find(o => o.pick === pk.no); if (slot && !slot.player) slot.team = to.id; }
   };
   aPicks.forEach(pk => move(A, B, pk)); bPicks.forEach(pk => move(B, A, pk));
-  const lbl = (ids: string[], pks: PickRef[]) => [...ids.map(id => w.players[id].name), ...pks.map(p => `${p.season} R${p.round} pick${p.original !== (pks === aPicks ? aId : bId) ? ` (${p.original})` : ''}`)].join(', ') || 'nothing';
+  const lbl = (ids: string[], pks: PickRef[]) => [...ids.map(id => w.players[id].name), ...pks.map(p => p.no ? `the No. ${p.no} pick` : `${p.season} R${p.round} pick${p.original !== (pks === aPicks ? aId : bId) ? ` (${p.original})` : ''}`)].join(', ') || 'nothing';
   const desc = `${A.abbr} trade ${lbl(aGives, aPicks)} to ${B.abbr} for ${lbl(bGives, bPicks)}`;
   w.tradeHistory.unshift({ date: w.season.day, text: desc });
   addEvent(w, 'trade', desc, [...aGives, ...bGives]);
@@ -246,7 +284,7 @@ export function aiProposeTrade(w: World) {
   if (!want.length) return;
   const target = want[Math.floor(rng.next() * want.length)].p;
   const theirs = O.roster.map(id => w.players[id]).filter(p => !p.injury);
-  const picks: PickRef[] = O.picks.filter(p => p.season > w.season.year && p.round <= 2).map(p => ({ season: p.season, round: p.round, original: p.original }));
+  const picks: PickRef[] = tradablePicks(w, O.id);
   const combos: { get: string[]; getPicks: PickRef[] }[] = [];
   for (const a of theirs) {
     combos.push({ get: [a.id], getPicks: [] });
@@ -287,3 +325,39 @@ export function aiAiTrades(w: World) {
 }
 const addD = (d: string, n: number) => { const t = new Date(d + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
 export { fmt$ };
+
+/** Draft night: while we are on the clock, a team further down may call to trade up. */
+export function aiDraftOffer(w: World): boolean {
+  const D = w.season.draft;
+  if (!D || D.done) return false;
+  const slot = D.order[D.idx];
+  const u = w.meta.userTeam;
+  if (!slot || slot.team !== u || slot.round > 2) return false;
+  const rng = stream(w.meta.seed, 'draftcall', D.year, slot.pick);
+  if (!rng.chance(slot.round === 1 ? 0.45 : 0.2)) return false;
+  const mine: PickRef = { season: D.year, round: slot.round, original: (slot as any).original ?? slot.team, no: slot.pick };
+  let best: { offer: TradeOffer; m: number } | null = null;
+  for (const O of Object.values(w.teams)) {
+    if (O.id === u) continue;
+    const later = liveDraftSlots(w, O.id).filter(p => p.no! > slot.pick && p.no! <= slot.pick + 18);
+    if (!later.length) continue;
+    const fut = O.picks.filter(p => p.season > D.year && p.round <= 2).map(p => ({ season: p.season, round: p.round, original: p.original }));
+    const combos: PickRef[][] = [];
+    for (const a of later) { combos.push([a]); for (const f of fut.slice(0, 3)) combos.push([a, f]); for (const b of later) if (b.no! > a.no!) combos.push([a, b]); }
+    for (const c of combos) {
+      // from their chair: they give c, they get our slot
+      const offer: TradeOffer = { other: O.id, give: [], get: [], givePicks: [mine], getPicks: c };
+      if (tradeLegal(w, offer)) continue;
+      const { margin, giveV } = aiMargin(w, offer);
+      const lo = 0.02 * Math.max(8, giveV), hi = 0.16 * Math.max(8, giveV);
+      if (margin > lo && margin < hi && (!best || margin < best.m)) best = { offer, m: margin };
+    }
+  }
+  if (!best) return false;
+  const O = w.teams[best.offer.other];
+  const what = best.offer.getPicks.map(p => pickLabel(p)).join(' + ');
+  addMessage(w, { date: w.season.day, from: O.gm, role: 'GM', subject: `${O.city} want to move up to No. ${slot.pick}`,
+    body: `We like a player on the board. We'll give you ${what} for the No. ${slot.pick} pick — right now, before you're on the clock any longer.`, urgent: 3, tag: 'Trade',
+    actions: [{ label: 'Accept trade', cmd: 'acceptAiTrade', arg: { ...best.offer } }, { label: 'Open in trade finder', cmd: 'tradeFinder', arg: { ...best.offer } }, { label: 'Decline', cmd: 'dismiss' }] });
+  return true;
+}
