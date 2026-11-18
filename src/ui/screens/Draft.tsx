@@ -1,4 +1,5 @@
 import { useStore, openModal, commit, toast } from '../store';
+import { draftMark, leagueLogo } from '../../sim/history';
 import { Panel, Btn, Logo, ht, Chip, PlayerTile, Tabs, curTab } from '../util';
 import { DraftRecap } from '../Showcase';
 import { runCommand } from '../actions';
@@ -54,7 +55,7 @@ export function Draft() {
   const done = D.order.filter(o => o.player);
   const mine = D.order.filter(o => o.team === u);
   return <div class="screen">
-    <div class="screen-h"><h2>{D.year} NBA Draft</h2>
+    <div class="screen-h">{(draftMark(D.year) ?? leagueLogo()) && <img class="ev-mark sm" src={draftMark(D.year) ?? leagueLogo()!} alt="" draggable={false} />}<h2>{D.year} NBA Draft</h2>
       <div class="screen-meta">{slot ? <>Pick #{slot.pick} · Round {slot.round} · On the clock: <b>{w!.teams[slot.team].city}</b></> : 'Draft complete'}</div></div>
     <div class="draft">
       <Panel title="Draft order" class="d-order">

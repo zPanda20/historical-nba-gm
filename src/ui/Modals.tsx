@@ -1,6 +1,7 @@
 import { useState } from 'preact/hooks';
 import { $y } from '../sim/history';
 import { SeasonCard } from './screens/League';
+import { TeamPage } from './screens/TeamPage';
 import { positionsOf, makeGameplan } from '../sim/coach';
 import { useStore, closeModal, commit, toast, openModal, go, setUI, ui } from './store';
 import { Headshot, Logo, Btn, Chip, Meter, ht, f1, pct, seasonLabel, OvrBadge, injuryChip, seenOvr, CondBar } from './util';
@@ -235,6 +236,7 @@ export function Modals() {
   switch (m.kind) {
     case 'message': { const msg = w.messages.find(x => x.id === m.arg.id); return msg ? <Shell title="On your desk"><MessageView w={w} m={msg} inModal era={peopleEra(w)} /></Shell> : null; }
     case 'player': return w.players[m.arg.id] ? <PlayerModal w={w} id={m.arg.id} key={m.arg.id} /> : null;
+    case 'team': return w.teams[m.arg.id] ? <Shell wide cls="team-modal" title={`${w.teams[m.arg.id].city} ${w.teams[m.arg.id].name}`}><TeamPage w={w} id={m.arg.id} key={m.arg.id} /></Shell> : null;
     case 'season': return <Shell wide cls="season-modal" title="Season record"><SeasonCard w={w} year={m.arg.year} /></Shell>;
     case 'box': { const g = w.season.games.find(x => x.id === m.arg.id); return g?.box ? <Shell wide title="Box score"><BoxScore w={w} g={g} /></Shell> : null; }
     case 'offer': return <OfferModal w={w} pid={m.arg.pid} msgId={m.arg.msgId} />;

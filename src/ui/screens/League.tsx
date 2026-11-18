@@ -1,6 +1,7 @@
 import { useStore, openModal } from '../store';
 import { Bracket } from '../Bracket';
-import { PlayerTile, place, Panel, Tabs, curTab, Logo, Headshot, f1, pct, dateShort, seasonLabel } from '../util';
+import { PlayerTile, place, Panel, Tabs, curTab, Logo, Headshot, f1, pct, dateShort, seasonLabel, TeamLink, openTeam } from '../util';
+import { logoFor, eventLogo } from '../../sim/history';
 import { standings, perGame, scoringTitle } from '../../sim/league';
 import type { Series, World } from '../../sim/types';
 
@@ -11,7 +12,7 @@ function Standings({ w }: { w: World }) {
       {[...new Set(Object.values(w.teams).filter(t => t.conf === conf).map(t => t.div))].map(div => {
         const ts = standings(w, conf).filter(t => t.div === div);
         return <table class="tbl compact st"><thead><tr><th class="l">{div}</th><th>W</th><th>L</th><th>PCT</th><th>GB</th><th>Home</th><th>PF</th><th>PA</th><th>Strk</th></tr></thead><tbody>
-          {ts.map(t => { const g = t.w + t.l; return <tr class={t.id === u ? 'me' : ''}><td class="tn l"><Logo t={t} size={22} />{place(t)}</td><td>{t.w}</td><td>{t.l}</td><td>{pct(g ? t.w / g : 0)}</td>
+          {ts.map(t => { const g = t.w + t.l; return <tr class={`click ${t.id === u ? 'me' : ''}`} onClick={() => openTeam(t.id)}><td class="tn l"><TeamLink t={t} /></td><td>{t.w}</td><td>{t.l}</td><td>{pct(g ? t.w / g : 0)}</td>
             <td>{t === ts[0] ? '—' : ((ts[0].w - t.w + t.l - ts[0].l) / 2).toFixed(1)}</td><td>{t.homeW}–{t.homeL}</td><td>{f1(g ? t.ptsFor / g : 0)}</td><td>{f1(g ? t.ptsAgainst / g : 0)}</td><td>{t.streak ? `${t.streak > 0 ? 'W' : 'L'}${Math.abs(t.streak)}` : '—'}</td></tr>; })}
         </tbody></table>;
       })}
@@ -31,7 +32,8 @@ function Leaders({ w }: { w: World }) {
 }
 
 function Playoffs({ w }: { w: World }) {
-  return <Panel class="fill"><Bracket w={w} /></Panel>;
+  const mark = eventLogo('playoffs', w.season.year);
+  return <Panel class="fill" title={mark ? <span class="po-title"><img class="ev-mark sm" src={mark} alt="" />{seasonLabel(w.season.year)} Playoffs</span> : undefined}><Bracket w={w} /></Panel>;
 }
 
 function News({ w }: { w: World }) {
@@ -47,7 +49,8 @@ function Moves({ w }: { w: World }) {
 export function teamThen(w: World, s: any, id: string): any {
   const t = w.teams[id];
   const n = s?.names?.[id];
-  return n ? { ...t, abbr: n.abbr, city: n.city, name: n.name.replace(`${n.city} `, ''), logoKey: n.logo } : t;
+  const logoKey = s?.year != null ? logoFor(id, s.year) : n?.logo;
+  return n ? { ...t, abbr: n.abbr, city: n.city, name: n.name.replace(`${n.city} `, ''), logoKey } : { ...t, logoKey: logoKey ?? t.logoKey };
 }
 const AWARD_ROWS: [string, string][] = [['MVP', 'Most Valuable Player'], ['Finals MVP', 'Finals MVP'], ['Scoring title', 'Scoring title'], ['ROY', 'Rookie of the Year'],
   ['DPOY', 'Defensive Player of the Year'], ['6MOY', 'Sixth Man of the Year'], ['MIP', 'Most Improved Player'], ['COY', 'Coach of the Year']];
@@ -99,6 +102,7 @@ export function SeasonCard({ w, year }: { w: World; year: number }) {
   return <div class="season-card" style={{ '--c1': champ.colors?.[0] ?? '#333', '--c2': champ.colors?.[1] ?? '#c9a227' } as any}>
     <div class="sc-head">
       <Logo t={champ} size={110} />
+      {eventLogo('finals', year) && <img class="sc-finals" src={eventLogo('finals', year)!} alt="NBA Finals" draggable={false} />}
       <div><span>{seasonLabel(year)} NBA Champions</span><h2>{champ.city} {champ.name}</h2>
         {runner && <p>Beat the {runner.city} {runner.name}{(s as any).finals ? ` ${(s as any).finals}` : ''} in the Finals</p>}
         {best && <p class="muted">Best record: {best.city} {best.name} ({s.standings[0].w}–{s.standings[0].l})</p>}</div>

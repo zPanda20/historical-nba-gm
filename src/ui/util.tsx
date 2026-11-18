@@ -113,6 +113,11 @@ export function PlayerTile({ p, size = 40, sub, onClick, class: cls = '', right 
     {right}
   </button>;
 }
+export function openTeam(id: string) { ui.modal = { kind: 'team', arg: { id } }; setUI({}); }
+/** A team name you can click: opens that club's page. */
+export function TeamLink({ t, size = 22, label }: { t: Team; size?: number; label?: ComponentChildren }) {
+  return <button data-nav class="tlink" onClick={(e: any) => { e.stopPropagation(); openTeam(t.id); }}><Logo t={t} size={size} /><span>{label ?? place(t)}</span></button>;
+}
 export function openPlayer(id: string) { ui.modal = { kind: 'player', arg: { id } }; setUI({}); }
 
 /** Condition: how fresh a player's legs are today (back-to-backs and heavy minutes drain it). */

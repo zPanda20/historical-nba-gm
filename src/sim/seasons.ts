@@ -3,12 +3,15 @@ import type { Coach, GameRec, Player, Team, World } from './types';
 import { clamp, stream } from './rng';
 import { playerValue } from './coach';
 import { addEvent, addMessage, addNews } from './world';
-import { IDENTITY_EVENTS, LOGO_FILES, alignmentFor, eraRules, expansionsFor, futureOf, $y } from './history';
+import { IDENTITY_EVENTS, LOGO_FILES, alignmentFor, eraRules, expansionsFor, futureOf, logoFor, $y } from './history';
 
 const addDays = (d: string, n: number) => { const t = new Date(d + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
 
 // ------------------------------------------------------------------ identities
 export function applyIdentityEvents(world: World, season: number) {
+  try { applyIdentityEventsInner(world, season); } finally { for (const t of Object.values(world.teams)) t.logoKey = logoFor(t.id, season); }
+}
+function applyIdentityEventsInner(world: World, season: number) {
   const done = new Set((world.franchiseEvents ?? []).filter((e: any) => e.done).map((e: any) => `${e.season}-${e.team}-${e.type}-${e.abbr ?? e.logo ?? ''}`));
   for (const ev of IDENTITY_EVENTS.filter(e => e.season === season)) {
     const t = world.teams[ev.team];
@@ -35,11 +38,7 @@ export function applyIdentityEvents(world: World, season: number) {
 export function teamLogoKey(t: Team) { return t.logoKey ?? t.abbr; }
 /** Older saves: bring every team's logo up to date with the calendar (new logo files arrive between versions). */
 export function syncLogos(world: World) {
-  for (const t of Object.values(world.teams)) {
-    const ev = IDENTITY_EVENTS.filter(e => e.team === t.id && e.logo && e.season <= world.season.year).sort((a, b) => a.season - b.season).pop();
-    if (ev?.logo) t.logoKey = ev.logo;
-    else if (t.id === 'DAL' && (!t.logoKey || !LOGO_FILES.has(t.logoKey))) t.logoKey = 'DAL';
-  }
+  for (const t of Object.values(world.teams)) t.logoKey = logoFor(t.id, world.season.year);
 }
 export function hasLogoFile(key: string) { return LOGO_FILES.has(key); }
 

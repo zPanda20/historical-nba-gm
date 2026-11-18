@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useStore, openModal, setUI, ui } from '../store';
 import { place, Panel, Tabs, curTab, Logo, dateShort, Btn, lastName } from '../util';
 import type { BoxLine, GameRec, World } from '../../sim/types';
+import { courtFor, uniformFor } from '../../sim/history';
 
 export function BoxScore({ w, g }: { w: World; g: GameRec }) {
   const H = w.teams[g.home], A = w.teams[g.away];
@@ -98,13 +99,13 @@ export function Gamecast({ id }: { id: string }) {
   const top = (side: 'home' | 'away') => g.box![side].map(l => ({ l, p: pts[l.pid] ?? 0 })).sort((a, b) => b.p - a.p).slice(0, 4);
   const qLabel = q <= 4 ? `${q}` : `OT${q - 4 > 1 ? q - 4 : ''}`;
   return <div class="cast" data-scope>
-    <div class="cast-arena" />
+    <div class="cast-arena" />{courtFor(H.id, w!.season.year) && <img class="cast-court" src={courtFor(H.id, w!.season.year)!} alt="" draggable={false} />}
     <div class="cast-board">
-      <div class="cb-team"><Logo t={A} size={86} /><div class="cb-name">{A.city}</div></div>
+      <div class="cb-team"><Logo t={A} size={86} /><div class="cb-name">{A.city}</div>{uniformFor(A.id, w!.season.year, 'road') && <img class="cb-kit" src={uniformFor(A.id, w!.season.year, 'road')!} alt="" title="Road uniform" />}</div>
       <div class="cb-score bulbs big">{String(score[1]).padStart(3, ' ')}</div>
       <div class="cb-mid"><div class="cb-q">Period <span class="bulbs">{qLabel}</span></div><div class="bulbs clock">{fmtClock(clock)}</div>{g.playoff && <div class="cb-po">Playoffs · Game {g.playoff.game}</div>}</div>
       <div class="cb-score bulbs big">{String(score[0]).padStart(3, ' ')}</div>
-      <div class="cb-team"><Logo t={H} size={86} /><div class="cb-name">{H.city}</div></div>
+      <div class="cb-team"><Logo t={H} size={86} /><div class="cb-name">{H.city}</div>{uniformFor(H.id, w!.season.year, 'home') && <img class="cb-kit" src={uniformFor(H.id, w!.season.year, 'home')!} alt="" title="Home uniform" />}</div>
     </div>
     {!showBox ? <div class="cast-body">
       <div class="cast-pbp">{[...shown].reverse().slice(0, 16).map((e, i) => <div class={`pbp ${e.type} ${i === 0 ? 'new' : ''}`}>

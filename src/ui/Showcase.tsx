@@ -5,6 +5,7 @@ import type { Player, World } from '../sim/types';
 import { perGame } from '../sim/league';
 import { getWorld, ui, useStore, setUI, hooks } from './store';
 import { Headshot, Logo, seasonLabel, place } from './util';
+import { logoFor, eventLogo, draftMark, leagueLogo } from '../sim/history';
 
 export interface Show { kind: 'champion' | 'awards' | 'draft' | 'offseason'; year: number; auto?: boolean }
 const DUR: Record<Show['kind'], number> = { champion: 7000, awards: 7500, draft: 6500, offseason: 6500 };
@@ -69,7 +70,8 @@ function Champion({ w, year }: { w: World; year: number }) {
   const S = w.season;
   const champ = S.champion ?? w.pastSeasons.find(p => p.year === year)?.champion;
   if (!champ) return null;
-  const t = w.teams[champ];
+  const t = { ...w.teams[champ], logoKey: logoFor(champ, year) };
+  const finLogo = eventLogo('finals', year);
   const fin = S.playoffs?.series.find(x => x.round === 4);
   const runner = fin ? (fin.winner === fin.hi ? fin.lo : fin.hi) : null;
   const R = runner ? w.teams[runner] : null;
@@ -84,7 +86,7 @@ function Champion({ w, year }: { w: World; year: number }) {
     <div class="champ-stage">
       <img class="champ-trophy" src="assets/trophy.png" alt="Larry O'Brien Trophy" draggable={false} />
       <div class="champ-copy">
-        <div class="champ-year">{seasonLabel(year)} NBA Champions</div>
+        {finLogo && <img class="champ-finals" src={finLogo} alt="NBA Finals" draggable={false} />}<div class="champ-year">{seasonLabel(year)} NBA Champions</div>
         <div class="champ-team"><Logo t={t} size={mine ? 120 : 96} /><div><b>{t.city}</b><strong>{t.name}</strong></div></div>
         {fin && R && <div class="champ-res">Beat the {R.city} {R.name} {Math.max(fin.wHi, fin.wLo)}–{Math.min(fin.wHi, fin.wLo)} in the Finals</div>}
         {fmvp && <div class="champ-mvp"><Headshot p={fmvp} size={48} /><div><small>Finals MVP</small><b>{fmvp.name}</b></div></div>}
@@ -117,7 +119,7 @@ function Awards({ w, year }: { w: World; year: number }) {
 function DraftTop5({ w }: { w: World }) {
   const D = w.season.draft!;
   return <div class="show-card draft5" onClick={(e: any) => e.stopPropagation()}>
-    <div class="aw-h"><span>{D.year} NBA Draft</span><h2>The top five</h2><small>{D.lottery?.text ?? ''}</small></div>
+    <div class="aw-h">{(draftMark(D.year) ?? leagueLogo()) && <img class="ev-mark" src={draftMark(D.year) ?? leagueLogo()!} alt="" draggable={false} />}<span>{D.year} NBA Draft</span><h2>The top five</h2><small>{D.lottery?.text ?? ''}</small></div>
     <div class="d5">{D.order.slice(0, 5).map((o, i) => { const p = o.player ? w.players[o.player] : null; const t = w.teams[o.team];
       return <div class={`d5-c ${o.team === w.meta.userTeam ? 'me' : ''}`} style={{ animationDelay: `${0.2 + i * 0.35}s` }}>
         <div class="d5-n">{o.pick}</div><Logo t={t} size={58} /><b>{p?.name ?? '—'}</b><small>{p ? `${p.pos} · ${p.college ?? '—'}` : ''}</small>
@@ -133,7 +135,7 @@ export function DraftRecap({ w }: { w: World }) {
   const ours = D.order.filter(o => o.team === u && o.player);
   const lot = (D.lottery?.results ?? []).filter(r => r.pre !== r.pick).slice(0, 4);
   return <div class="recap">
-    <div class="recap-h"><div><span>{D.year} NBA Draft</span><h2>Draft recap</h2></div><p>{D.lottery?.text}</p></div>
+    <div class="recap-h">{(draftMark(D.year) ?? leagueLogo()) && <img class="ev-mark" src={draftMark(D.year) ?? leagueLogo()!} alt="" draggable={false} />}<div><span>{D.year} NBA Draft</span><h2>Draft recap</h2></div><p>{D.lottery?.text}</p></div>
     <div class="recap-b">
       <div class="recap-r1"><h4>First round</h4>
         <div class="recap-list">{r1.map(o => { const p = w.players[o.player!]; const t = w.teams[o.team];

@@ -2,6 +2,7 @@
 // Identity changes, relocations, expansions and realignments happen on the real calendar; everything that
 // happens on the court is simulated. Teams keep their 1976 franchise id for life (BUF is the Clippers' franchise).
 import { stream } from './rng';
+import { PACK_TIMELINE, PACK_EVENTS } from './assetPack';
 
 export interface IdentityEvent {
   season: number; team: string; type: 'relocation' | 'rename' | 'rebrand';
@@ -17,6 +18,7 @@ export const LOGO_FILES = new Set([
   'ATL', 'BOS', 'BUF', 'CHI', 'CLE', 'DEN', 'DET', 'GSW', 'HOU', 'IND', 'KCK', 'LAL', 'MIL', 'NJN', 'NOJ', 'NYK', 'NYN', 'PHI', 'PHX', 'POR', 'SAS', 'SEA', 'WSB',
   'KEN', 'PIT', 'STL', 'VIR',
   'PHI-1977', 'DET-1978', 'NJN-1978', 'UTA-1979', 'CHH-1988', 'MIA-1988', 'MIN-1989', 'ORL-1989', 'TOR-1995', 'SEA-1995', 'MIA-1999', 'LAL-2001',
+  ...Object.values(PACK_TIMELINE.logo ?? {}).flatMap(v => v.map(x => x[2])),
   'ORL-2001', 'CHA-2004', 'ATL-1995', 'ATL-2007', 'BOS-1996', 'NJN-1990', 'NJN-1997', 'CLE-1983', 'CLE-1994', 'CLE-2003', 'CLE-2010', 'DAL', 'DAL-1993', 'DAL-2001', 'MIN-2008', 'ORL-2011', 'CHA-2012', 'CHA-2014', 'MIL-2015', 'MIN-2017', 'GSW-2019', 'TOR-2020', 'ORL-2025', 'MIN-2026',
 ]);
 
@@ -223,3 +225,37 @@ export function $y(n: number, year = ERA.year): number {
   const step = v >= 5e6 ? 50000 : v >= 1e6 ? 25000 : 5000;
   return Math.round(v / step) * step;
 }
+
+// ------------------------------------------------------------------ season-accurate visuals
+const BASE_KEY: Record<string, string> = {};
+/** The logo a franchise wore in a given season: the asset pack first, your own files where the pack stops, a badge for a new identity with no art. */
+export function logoFor(fid: string, season: number): string {
+  // the current identity started at the latest relocation/rename (or at expansion); older art never carries over
+  let idStart = -1, idKey = BASE_KEY[fid] ?? fid;
+  const exp = [...EXPANSIONS, ...FUTURE_EXPANSION].find(e => e.id === fid && e.season > 0 && e.season <= season);
+  if (exp) { idStart = exp.season; idKey = exp.logo; }
+  for (const e of IDENTITY_EVENTS) if (e.team === fid && (e.type === 'relocation' || e.type === 'rename') && e.season <= season && e.season >= idStart) { idStart = e.season; idKey = e.logo ?? idKey; }
+  if (fid === 'SEA2' || fid === 'LVG') return idKey;
+  let best: [number, number, string] | null = null; // [start, priority, key]
+  for (const [fs, , key] of PACK_TIMELINE.logo?.[fid] ?? []) if (fs <= season && fs >= idStart && (!best || fs > best[0] || (fs === best[0] && best[1] < 1))) best = [fs, 1, key];
+  for (const e of IDENTITY_EVENTS) if (e.team === fid && e.logo && e.season <= season && e.season >= idStart && LOGO_FILES.has(e.logo) && (!best || e.season > best[0])) best = [e.season, 0, e.logo];
+  if (exp && exp.season >= idStart && LOGO_FILES.has(exp.logo) && (!best || exp.season > best[0])) best = [exp.season, 0, exp.logo];
+  return best ? best[2] : idKey;
+}
+const span = (list: [number, number, string][] | undefined, season: number, exact = false) => {
+  if (!list) return null;
+  const hit = list.filter(x => x[0] <= season && (!exact || season <= x[1])).pop();
+  return hit ? `assets/pack/${hit[2]}` : null;
+};
+/** Home / road uniform, wordmark and court art for a franchise in a season (null when the pack has none for that era). */
+export function uniformFor(fid: string, season: number, side: 'home' | 'road') { return span(PACK_TIMELINE[side]?.[fid], season, true); }
+export function wordmarkFor(fid: string, season: number) { return span(PACK_TIMELINE.word?.[fid], season, true); }
+export function courtFor(fid: string, season: number) { return span(PACK_TIMELINE.court?.[fid], season, true); }
+/** League marks for a season: the draft held at the end of `season`, that season's playoffs and Finals. Exact years only. */
+export function eventLogo(kind: 'draft' | 'finals' | 'playoffs', season: number) {
+  const hit = (PACK_EVENTS[kind] ?? []).find(x => x[0] === season || (x[0] <= season && season <= x[1] && x[1] !== 9999));
+  return hit ? `assets/pack/${hit[2]}` : null;
+}
+/** The draft held in calendar year `draftYear` (the pack files it under the season that ends that June). */
+export const draftMark = (draftYear: number) => eventLogo('draft', draftYear - 1);
+export const leagueLogo = () => { const l = PACK_EVENTS.league?.[0]; return l ? `assets/pack/${l[2]}` : null; };

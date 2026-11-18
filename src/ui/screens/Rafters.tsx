@@ -1,7 +1,8 @@
 // Look up (Space): the rafters, as in the approved mockup. Banners hang from the steel; the scoreboard below
 // keeps the decisions waiting in view.
 import { useStore, setUI } from '../store';
-import { seasonLabel } from '../util';
+import { seasonLabel, logoUrl } from '../util';
+import { logoFor, LOGO_FILES } from '../../sim/history';
 import type { World } from '../../sim/types';
 
 // Real championships before the save starts (titles only). Everything after October 1976 is earned in this save.
@@ -17,6 +18,13 @@ const PRE: Record<string, { y: number; where: string; aba?: boolean }[]> = {
   NYN: [{ y: 1974, where: 'New York', aba: true }, { y: 1976, where: 'New York', aba: true }],
   IND: [{ y: 1970, where: 'Indiana', aba: true }, { y: 1972, where: 'Indiana', aba: true }, { y: 1973, where: 'Indiana', aba: true }],
 };
+
+// Where a pre-1976 banner was won in the same city and logo era as the 1976 club, it carries that logo; older ones stay plain.
+const CITY76: Record<string, string> = { BOS: 'Boston', LAL: 'Los Angeles', GSW: 'Golden State', NYK: 'New York', MIL: 'Milwaukee', NYN: 'New York', IND: 'Indiana' };
+function bannerLogo(fid: string, y: number, save: boolean, where: string): string | null {
+  const k = save ? logoFor(fid, y - 1) : y >= 1968 && CITY76[fid] === where ? logoFor(fid, 1976) : null;
+  return k && LOGO_FILES.has(k) ? logoUrl(k) : null;
+}
 
 export function RaftersBg() {
   const lines: any[] = [];
@@ -62,7 +70,7 @@ export function Rafters() {
     <div class="rf-head"><h2>The rafters</h2><span>Before 1976: real {t.name} history · After: won in this save</span></div>
     <div class={`rf-banners ${banners.length > 9 ? 'many' : ''}`}>
       {banners.map(b => <div class={`rf-ban ${b.save ? 'save' : ''}`}><i class="wire" />
-        <div class="rf-face"><span class="rf-l">{(b as any).aba ? 'ABA' : 'World'}<br />Champions</span><i class="rf-rule" /><b>{b.y}</b><span class="rf-w">{b.where}</span></div>
+        <div class="rf-face">{bannerLogo(t.id, b.y, b.save, b.where) && <img class="rf-logo" src={bannerLogo(t.id, b.y, b.save, b.where)!} alt="" draggable={false} />}<span class="rf-l">{(b as any).aba ? 'ABA' : 'World'}<br />Champions</span><i class="rf-rule" /><b>{b.y}</b><span class="rf-w">{b.where}</span></div>
         {b.save && <em class="rf-this">This save</em>}</div>)}
       {Array.from({ length: ghosts }, () => <div class="rf-ban ghost"><i class="wire" /><div class="rf-face">Your {mine.length ? 'next' : 'first'} banner</div></div>)}
     </div>
