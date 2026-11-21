@@ -5,6 +5,7 @@ import { migrateContracts } from '../sim/contracts';
 import { exerciseOption, declineOption, resolveSheet, withdrawOffer, faAdvanceDay, faState, pendingDecisions, faActive, finishFreeAgency } from '../sim/market';
 import { rosterRules } from '../sim/rules';
 import { migrateSave } from '../sim/impact';
+import { makePromise, mediate, migratePeople, refuseRequest } from '../sim/people';
 import { potentialOvr } from '../sim/world';
 import { createWorld, addMessage, addEvent } from '../sim/world';
 import { advanceDay, addDays, runDraftUntilUser, makePick, startNextSeason, projectedWinsCache, nextUnplayedDate } from '../sim/league';
@@ -41,6 +42,7 @@ export function enterLoaded(w: World) {
   syncLogos(w);
   migrateSave(w, potentialOvr);
   migrateContracts(w);
+  migratePeople(w);
   tidyMessages(w);
   Object.assign(projectedWinsCache, projectedWins(w));
   setWorld(w);
@@ -225,6 +227,7 @@ export function runCommand(m: Message, a: { label: string; cmd: string; arg?: an
       else if (a.arg === 'fa') go('office', 'fa');
       else if (a.arg === 'draft') go('draft');
       else if (a.arg === 'office') go('office', 'contracts');
+      else if (a.arg === 'roster:locker') go('roster', 'locker');
       else go(a.arg);
       commit(); return;
     }
@@ -257,13 +260,10 @@ export function runCommand(m: Message, a: { label: string; cmd: string; arg?: an
       const res = requestCoach(w, a.arg.pid, a.arg.kind);
       resolve(); openModal('notice', { title: 'Coach responds', body: res.text }); commit(); return;
     }
-    case 'patience': {
-      const p = w.players[a.arg.pid];
-      p.morale = Math.min(100, (p.morale ?? 50) + ((p.traits.patience ?? 50) > 50 ? 12 : 4));
-      w.promises.push({ id: `pr${w.log.seq}`, to: p.id, kind: 'role review', made: w.season.day, due: addDays(w.season.day, 45), status: 'open' });
-      addEvent(w, 'promise', `Asked ${p.name} for patience; role review promised`, [p.id]);
-      resolve(); toast(`${p.name}'s camp will give it time — they'll remember the promise.`); break;
-    }
+    case 'patience': { const t = makePromise(w, a.arg.pid, 'role review'); resolve(); toast(t); break; }
+    case 'promise': { const t = makePromise(w, a.arg.pid, a.arg.kind); resolve(); openModal('notice', { title: 'Promise made', body: t }); commit(); return; }
+    case 'mediate': { const t = mediate(w, a.arg.a, a.arg.b, a.arg.how); resolve(); openModal('notice', { title: a.arg.how === 'gm' ? 'The meeting' : a.arg.how === 'coach' ? 'The coach handles it' : 'You stay out of it', body: t }); commit(); return; }
+    case 'refuseRequest': { const t = refuseRequest(w, a.arg.pid); resolve(); toast(t); break; }
     case 'sandbox': { w.meta.mode = 'sandbox'; w.meta.fired = false; resolve(); toast('Continuing in sandbox mode.'); break; }
     default: resolve();
   }

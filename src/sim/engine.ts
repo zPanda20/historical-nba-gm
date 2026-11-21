@@ -2,6 +2,7 @@
 // The SAME function resolves watched and fast-simmed games; `log` only controls text output.
 import type { BoxLine, BoxScore, Coach, GameEvent, Player, Team, World } from './types';
 import { injuryRisk } from './impact';
+import { closerPull, cohesion, composure, injuryMul } from './people';
 import { twoWayCanPlay } from './rules';
 import { Rng, clamp, logit, sigmoid, stream, z } from './rng';
 import { Gameplan, makeGameplan, playerValue, POSITIONS, PosKey, posScore } from './coach';
@@ -58,7 +59,7 @@ const SHOT_MIX: Record<string, [ShotType, number][]> = {
 const ASSIST_P: Record<string, number> = { post: 0.44, iso: 0.12, motion: 0.84, high: 0.7, pnr: 0.62, spot: 0.9, trans: 0.6, putback: 0.0 };
 
 interface PState { p: Player; slot: number; sec: number; F: number; fouls: number; out: boolean; injured: boolean; line: BoxLine; pos?: PosKey; mis: number; best: number; }
-interface Side { team: Team; coach: Coach; plan: Gameplan; ps: PState[]; on: PState[]; teamFouls: number; score: number; qScore: number[]; }
+interface Side { team: Team; coach: Coach; plan: Gameplan; ps: PState[]; on: PState[]; teamFouls: number; score: number; qScore: number[]; coh: number; }
 
 export interface GameResult { hs: number; as: number; ot: number; box: BoxScore; log: GameEvent[]; injuries: { pid: string; days: number; type: string }[]; minutes: Record<string, number>; }
 
@@ -105,7 +106,7 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
     const on = plan.starters.map(id => ps.find(x => x.p.id === id)!).filter(Boolean);
     for (const x of ps) if (on.length < 5 && !on.includes(x)) on.push(x);
     on.forEach(x => (x.line.gs = true));
-    const sd: Side = { team, coach, plan, ps, on, teamFouls: 0, score: 0, qScore: [] };
+    const sd: Side = { team, coach, plan, ps, on, teamFouls: 0, score: 0, qScore: [], coh: cohesion(team) };
     for (const x of on) x.pos = (plan.slots?.[x.p.id] as PosKey) ?? undefined;
     assignSlots(sd, []);
     return sd;
@@ -174,7 +175,7 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
           x.sec += t;
           x.F = clamp(x.F + (t / 60) * CAL.fatOn * (1.35 - x.p.r.stamina / 100) / S[s].plan.pace, 0, 1);
           // injury hazard (exposure = minutes on floor)
-          if (!x.injured && irng.chance(CAL.injuryPerMin * injuryRisk(x.p) * (t / 60) * (1 + Math.max(0, (x.p.age ?? 27) - 30) * 0.06) * (1 + x.F))) {
+          if (!x.injured && irng.chance(CAL.injuryPerMin * injuryRisk(x.p) * injuryMul(x.p) * (t / 60) * (1 + Math.max(0, (x.p.age ?? 27) - 30) * 0.06) * (1 + x.F))) {
             x.injured = true;
             const roll = irng.next();
             const sev = roll < 0.62 ? 'minor' : roll < 0.9 ? 'moderate' : 'serious';
@@ -310,7 +311,10 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
     if (hurry) t = Math.max(0.5, clock - 0.5);
     // actor
     // shot-taking share is driven by the player's real usage tendency (FGA rate), nudged by fit for the action
-    const useW = (x: PState) => Math.max(2, 8 + (eff(x, 'usage') - 30) * 0.26);
+    // late and close: the people who want the ball get it; the playoffs and the clock test composure (bounded, F15)
+    const clutch = q >= rules.quarters && clock <= 300 && Math.abs(S[0].score - S[1].score) <= 6;
+    const pressure = (opts.playoff ? 0.5 : 0) + (clutch ? 0.5 : 0);
+    const useW = (x: PState) => Math.max(2, 8 + (eff(x, 'usage') - 30) * 0.26) * (clutch ? closerPull(x.p) : 1);
     const actorW = (x: PState) => {
       const r = x.p.r;
       const u = useW(x);
@@ -331,7 +335,7 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
 
     // turnover (competing branch, F4)
     const ballZ = (z(eff(actor, 'handle')) * 0.6 + z(eff(actor, 'iq')) * 0.25 + z(eff(actor, 'pass')) * 0.15);
-    const pTO = clamp(sigmoid(logit(CAL.tov[action] ?? 0.14) + tovE - 0.22 * ballZ + 0.15 * z(eff(def, 'stl')) + (press - 0.55) * 0.6 + 0.25 * Math.max(0, actor.F - 0.4) + 0.55 * mO * Math.max(0, 0.25 - LO.bh)), 0.02, 0.42);
+    const pTO = clamp(sigmoid(logit(CAL.tov[action] ?? 0.14) + tovE - 0.22 * ballZ + 0.15 * z(eff(def, 'stl')) + (press - 0.55) * 0.6 + 0.25 * Math.max(0, actor.F - 0.4) + 0.55 * mO * Math.max(0, 0.25 - LO.bh) - 0.07 * O.coh + 0.06 * pressure * Math.max(0, -composure(actor.p))), 0.02, 0.42);
     if (!hurry && rng.chance(pTO)) {
       runClock(Math.max(1, t * 0.6));
       actor.line.tov++;
@@ -409,7 +413,7 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
     if (shotType === 'rim' || shotType === 'close') {
       contest += 0.13 * Math.max(0, 2.4 - LO.sp) * mO; // no spacing: the paint is crowded
       const rimProt = Math.max(...D.on.map(x => z(eff(x, 'intD')) * 0.6 + z(eff(x, 'blk')) * 0.4));
-      contest = contest * 0.6 + rimProt * 0.4;
+      contest = contest * 0.6 + rimProt * 0.4 + 0.035 * D.coh; // help that talks arrives on time
     }
     if (action === 'trans') contest -= 0.7;
     if (action === 'putback') contest += 0.2;
@@ -420,7 +424,7 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
       : shotType === 'three' ? eff(shooter, 'three') : eff(shooter, 'mid');
     const passBoost = assister ? CAL.bPass * (z(eff(assister, 'pass')) * 0.6 + 0.6) : 0;
     let pMake = sigmoid(logit(shotType === 'three' ? base3 : CAL.baseMake[shotType]) + CAL.bShoot * z(skill) - CAL.bContest * contest + passBoost
-      - CAL.bFat * Math.max(0, shooter.F - 0.35) + CAL.homeLogit * homeEdge(off) + (shotType === 'three' ? 0 : shotType === 'lmid' ? two * 0.4 : two));
+      - CAL.bFat * Math.max(0, shooter.F - 0.35) + CAL.homeLogit * homeEdge(off) + (shotType === 'three' ? 0 : shotType === 'lmid' ? two * 0.4 : two) + 0.07 * pressure * composure(shooter.p));
     pMake = clamp(pMake, 0.08, 0.9);
 
     const isThree = shotType === 'three';

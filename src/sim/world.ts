@@ -5,6 +5,7 @@ import { playerValue } from './coach';
 import { eraRules, setEraYear } from './history';
 import { classData, injectClass } from './seasons';
 import { shapeCareer, shapeDraftOutlier, hypeOf } from './impact';
+import { initPeople } from './people';
 
 export const SCHEMA = 1;
 
@@ -79,6 +80,7 @@ export function createWorld(data: any, opts: { userTeam: string; mode: 'career' 
   for (const id in teams) teams[id].payrollBudget = Math.round(teams[id].roster.reduce((s, pid) => s + (players[pid].contract?.salary ?? 0), 0) * 1.08);
   // user coach trust starts neutral-plus
   world.coaches[teams[opts.userTeam].coach].trustGM = 58;
+  initPeople(world);
   initScouting(world);
   return world;
 }

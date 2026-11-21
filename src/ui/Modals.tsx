@@ -22,6 +22,8 @@ import { seenRating, sdFor, reportsOn, scoutTrips, useScoutTrip, scoutPlayer } f
 import { roles } from './screens/Roster';
 import { hashStr } from '../sim/rng';
 import type { Player, World } from '../sim/types';
+import { TRAIT_KEYS, TRAIT_LABEL, TRAIT_SHORT, PROMISE_SHORT, PROMISE_TEXT, makePromise, isMonster, mentalityWord, orgTrustWord, personaBlurb, personaLabel, relationsOf, topMotives, trustWord } from '../sim/people';
+import type { PromiseKind } from '../sim/people';
 
 function Shell({ title, children, wide, cls = '' }: { title?: any; children: any; wide?: boolean; cls?: string }) {
   return <div class="modal-bg" data-scope onClick={(e: any) => { if (e.target.classList.contains('modal-bg')) closeModal(); }}>
@@ -94,9 +96,7 @@ function PlayerModal({ w, id }: { w: World; id: string }) {
         <h4>Contract</h4>
         {p.contract ? <><div class="pm-c"><b>{fmt$(p.contract.salary)}</b> / yr · {p.contract.years} yr{p.contract.years === 1 ? '' : 's'} left</div><div class="muted small">{p.contract.provenance}</div></>
           : <div class="pm-c">No contract{!p.retired && <> · asking about {fmt$(p.ask ?? marketSalary(p))}</>}</div>}
-        <h4>Personality</h4>
-        <div class="traits">{Object.entries(p.traits).map(([k, v]) => <div><span>{k}</span><em>{word(v)}</em></div>)}</div>
-        <div class="muted small">{p.traitsNote}</div>
+        <Personality w={w} p={p} mine={mine} />
         <div class="pm-act">
           {!mine && !p.team && !p.retired && w.freeAgents.includes(p.id) && <div class="pm-fa"><Btn kind="sm" onClick={() => openModal('offer', { pid: p.id })}>{(p as any).bird === u ? 'Re-sign him' : 'Make an offer'}</Btn></div>}
           {!mine && !p.retired && <ScoutBox w={w} p={p} />}
@@ -119,6 +119,44 @@ function PlayerModal({ w, id }: { w: World; id: string }) {
       </div>
     </div>
   </Shell>;
+}
+
+const traitWord = (v: number) => v >= 95 ? 'Extreme' : v >= 85 ? 'Very high' : v >= 68 ? 'High' : v >= 45 ? 'Average' : v >= 30 ? 'Low' : 'Very low';
+const PROMISE_KINDS: PromiseKind[] = ['role review', 'contend', 'no trade', 'extension'];
+function Personality({ w, p, mine }: { w: World; p: Player; mine: boolean }) {
+  // before he has played in the league the staff only has interviews and workouts: a partial read, no archetype
+  const known = mine || (p.stats ?? []).some(x => x.g > 0) || !!p.retired;
+  const label = known ? personaLabel(p) : null, blurb = known ? personaBlurb(p) : null;
+  const keys = known ? TRAIT_KEYS : (['drive', 'discipline', 'poise', 'ego'] as const);
+  const fuzz = (k: string) => known ? 0 : (Math.abs(hashStr(p.id + k)) % 15) - 7;
+  const r = p.team ? relationsOf(w, p.id) : null;
+  const open = (w.promises ?? []).filter(x => x.to === p.id && x.status === 'open');
+  const past = (w.promises ?? []).filter(x => x.to === p.id && (x.status === 'kept' || x.status === 'broken')).slice(-2);
+  const nm = (id: string) => w.players[id]?.name ?? '';
+  return <>
+    <h4>Personality</h4>
+    <div class="pm-persona">{label && <Chip kind={isMonster(p) ? 'warn' : ''}>{label}</Chip>}<span>{known ? 'Mentality' : 'Scouts’ read on his mentality'}: <b>{mentalityWord(p, fuzz('m'))}</b></span></div>
+    {blurb && <div class="muted small pm-blurb">{blurb}</div>}
+    <div class="traits pm-traits">{keys.map(k => <div title={TRAIT_LABEL[k]}><span>{TRAIT_SHORT[k]}</span><em>{traitWord((p.traits[k] ?? 50) + fuzz(k))}</em></div>)}</div>
+    {!known && <div class="muted small">Interviews and workouts only. The rest shows once he plays.</div>}
+    {known && (p as any).motives && <div class="pm-drives"><span>What drives him</span><b>{topMotives(p, 3).join(', ')}</b></div>}
+    {r && <div class="pm-rel">
+      {mine && r.trustGM != null && <div><span>Toward you</span><b>{trustWord(r.trustGM)}</b></div>}
+      {r.trustOrg != null && <div><span>Toward the team</span><b>{r.wantsOut ? 'Wants out' : orgTrustWord(r.trustOrg)}</b></div>}
+      {r.close.length > 0 && <div><span>Close with</span><b>{r.close.map(x => x.name).join(', ')}</b></div>}
+      {r.friction.length > 0 && <div><span>Friction with</span><b class="bad">{r.friction.map(x => x.name).join(', ')}</b></div>}
+      {r.mentor && w.players[r.mentor]?.team === p.team && <div><span>Mentor</span><b>{nm(r.mentor)}</b></div>}
+      {r.mentees.length > 0 && <div><span>Mentoring</span><b>{r.mentees.map(nm).join(', ')}</b></div>}
+    </div>}
+    {mine && <div class="pm-promise">
+      <span class="pm-ph">Make a promise</span>
+      {open.map(x => <div class="muted small">You promised: “{x.text ?? x.kind}” (due {x.due.slice(5).replace('-', '/')})</div>)}
+      {past.map(x => <div class={`small ${x.status === 'broken' ? 'bad' : 'muted'}`}>{x.status === 'kept' ? 'Kept' : 'Broke'}: “{x.text ?? x.kind}”</div>)}
+      <div class="pm-pb">{PROMISE_KINDS.filter(k => !open.some(x => x.kind === k) && (k !== 'extension' || (p.contract?.years ?? 0) <= 2)).map(k =>
+        <Btn kind="sm ghost" onClick={() => { const t = makePromise(w, p.id, k); commit(); toast(t); }}>{PROMISE_SHORT[k]}</Btn>)}</div>
+    </div>}
+    <div class="muted small">{p.traitsNote || 'In this universe: simulated personality, not a claim about the real person.'}</div>
+  </>;
 }
 
 function ScoutBox({ w, p }: { w: World; p: Player }) {

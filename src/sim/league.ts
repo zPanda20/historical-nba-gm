@@ -6,6 +6,7 @@ import { playerValue } from './coach';
 import { addEvent, addMessage, addNews, buildSchedule, initScouting, potentialOvr, projectedWins, teamStrength } from './world';
 import { eraRules, salaryScale, setEraYear, $y } from './history';
 import { arcDev, hypeOf } from './impact';
+import { cultureDevMul, declineMul, mentality, peopleOffseason, peopleSeasonStart, peopleWeek } from './people';
 import { makeContract } from './contracts';
 import { assessLuxuryTax, capRules, rookieScale, teamPayroll, fmtM, minSalary, yos } from './cap';
 const minSalaryFor = (season: number, p: Player) => minSalary(season, yos(p));
@@ -102,17 +103,21 @@ export function nextUnplayedDate(world: World): string | null {
 }
 
 /** Advance one calendar day. Returns a short description of what happened. */
+const isMonday = (d: string) => new Date(d + 'T12:00:00Z').getUTCDay() === 1;
+
 export function advanceDay(world: World): string {
   const S = world.season;
   if (S.phase === 'preseason') {
     S.phase = 'regular';
     S.day = world.season.games[0]?.date ?? S.day;
     setEraYear(S.year);
+    peopleSeasonStart(world);
     addNews(world, `${S.year}–${String(S.year + 1).slice(2)} season tips off`, `${Object.keys(world.teams).length} teams, ${eraRules(S.year).games} games each. ${S.year === 1976 ? 'The first season since the ABA–NBA merger brings Denver, Indiana, the New York Nets and San Antonio into the league.' : 'A new season begins.'}`, 'league');
     return 'Season started';
   }
   if (S.phase === 'regular') {
     if (S.day < (world.season.games[0]?.date ?? S.day)) { S.day = addDays(S.day, 1); healDay(world); return 'Off day'; }
+    if (isMonday(S.day)) peopleWeek(world);
     const today = S.games.filter(g => g.date === S.day && !g.played);
     for (const g of today) playGame(world, g);
     pruneGames(world);
@@ -127,6 +132,7 @@ export function advanceDay(world: World): string {
     return `${today.length} games played`;
   }
   if (S.phase === 'playoffs') {
+    if (isMonday(S.day)) peopleWeek(world);
     playoffDay(world);
     prunePlayoffLogs(world);
     healDay(world);
@@ -601,13 +607,14 @@ export function developPlayers(world: World) {
     const arc = arcDev(p, age);
     const opp = Math.max(arc.oppMin, clamp(0.55 + minutes / 3000, 0.55, 1.25));
     const coach = p.team ? world.coaches[world.teams[p.team].coach] : null;
-    const coachFit = coach ? 0.85 + coach.development / 250 : 0.8;
+    const coachFit = (coach ? 0.85 + coach.development / 250 : 0.8) * cultureDevMul(world, p);
+    const decK = declineMul(p);
     for (const k of Object.keys(p.r) as (keyof Player['r'])[]) {
       if (k === 'hgt') continue;
       const C = p.ceil[k]?.mu ?? p.r[k];
       const eta = Math.max(arc.etaMin, age <= 21 ? 0.34 : age <= 23 ? 0.28 : age <= 25 ? 0.2 : age <= 27 ? 0.1 : 0.04);
       const physical = ['ath', 'stamina', 'blk', 'oreb', 'drive', 'perD'].includes(k);
-      const decline = arc.declineMul * (age >= 30 ? (physical ? 1.5 + (age - 30) * 0.75 : 0.55 + (age - 30) * 0.45) : age >= 28 && physical ? 0.5 : 0);
+      const decline = decK * arc.declineMul * (age >= 30 ? (physical ? 1.5 + (age - 30) * 0.75 : 0.55 + (age - 30) * 0.45) : age >= 28 && physical ? 0.5 : 0);
       // grow toward the ceiling; drift above it is pulled back, so noise cannot walk a player past his talent
       const gap = C - p.r[k];
       const delta = (gap > 0 ? eta * opp * coachFit * gap : 0.35 * gap) - decline + rng.normal(0, 1.6);
@@ -624,7 +631,7 @@ export function retirements(world: World) {
     if (p.retired || !p.age) continue;
     const rng = stream(world.meta.seed, 'retire', world.season.year, p.id);
     const r0 = -2.94 + 0.52 * (p.age - 30);
-    const s = r0 + (p.injury?.severity === 'serious' ? 0.8 : 0) + (p.team ? -0.4 : 0.9) - (playerValue(p) - 55) / 18 + (p.traits.drive - 50) / -60;
+    const s = r0 + (p.injury?.severity === 'serious' ? 0.8 : 0) + (p.team ? -0.4 : 0.9) - (playerValue(p) - 55) / 18 + (p.traits.drive - 50) / -60 - Math.max(0, mentality(p) - 80) / 40;
     // prospects who never made a roster drift out of the league; nothing of them needs keeping
     if (!p.team && !p.contract && p.draftClass && p.draftClass <= world.season.year - 1 && !(p.stats ?? []).length) {
       const yrs = world.season.year - p.draftClass;
@@ -643,6 +650,7 @@ export function retirements(world: World) {
 
 export function startNextSeason(world: World) {
   const S = world.season;
+  peopleOffseason(world);
   developPlayers(world);
   retirements(world);
   coachingCarousel(world);

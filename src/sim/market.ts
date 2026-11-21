@@ -1,12 +1,13 @@
 // Free agency as a market: thirty July days, a moratorium before deals become official (from 1999), offers from every
 // interested team, players choosing between them (money, years, a winner, a role, loyalty), qualifying offers and offer
 // sheets for restricted free agents, and the late-summer scramble for minimum deals and two-way spots.
+import { cultureAppeal, motive } from './people';
 import type { ContractOption, Player, Team, World } from './types';
 import { aiSignAndTrades } from './signtrade';
 import { clamp, stream } from './rng';
 import { playerValue } from './coach';
 import { addEvent, addMessage, addNews, projectedWins } from './world';
-import { capRules, capSeason, signingCheck, noteSigning, teamPayroll, minSalary, yos, aiSpendLine, fmtM, capRoom, maxSalary } from './cap';
+import { bestOffer, marketValue, capRules, capSeason, signingCheck, noteSigning, teamPayroll, minSalary, yos, aiSpendLine, fmtM, capRoom, maxSalary } from './cap';
 import type { SignVia } from './cap';
 import { makeContract, maxRaise, maxFor, qualifyingOffer, twoWaySalary, birdLevel, salaryAt } from './contracts';
 import { rules, rosterCount, twoWayCount, twoWayEligible } from './rules';
@@ -77,11 +78,13 @@ export function offerUtility(w: World, p: Player, o: FAOffer): number {
   if (o.opts?.some(x => x.kind === 'team')) u -= 0.07;
   const t = w.teams[o.team];
   const proj = (projectedWins(w)[o.team] ?? 41) / 82;
-  u += (proj - 0.5) * 0.5 * ((p.traits.drive ?? 50) / 55) * (age >= 30 ? 1.5 : 1);  // older players chase rings
+  u += (proj - 0.5) * 0.5 * Math.min(1.25, (p.traits.drive ?? 50) / 55) * (age >= 30 ? 1.5 : 1);  // older players chase rings
   const better = t.roster.map(id => w.players[id]).filter(x => x && playerValue(x) > playerValue(p)).length;
   u += better < 4 ? 0.06 : better < 8 ? 0 : -0.08;
   if ((p as any).bird === o.team) u += 0.05 + ((p.traits.loyalty ?? 50) - 50) / 400;
   if (o.twoWay) u -= 0.05;
+  u += (proj - 0.5) * 0.5 * Math.min(1, Math.max(0, motive(p, 'rings') - 1 / 12) * 6) * 0.15; // a man who lives for titles weighs the roster more
+  u += cultureAppeal(w, p, o.team);
   return u + stream(w.meta.seed, 'fa-taste', faState(w).year, p.id, o.team).normal(0, 0.03);
 }
 
@@ -250,10 +253,27 @@ export function closeFreeAgency(w: World, log: string[] = []) {
   }
   F.offers = {}; F.decideAt = {};
   const rng = stream(w.meta.seed, 'fa-close', F.year);
+  // last call: a good player still unsigned takes the best real offer a team can make, at a discount, rather than a minimum
+  const askOf = (p: Player) => p.ask ?? marketValue(season, playerValue(p), p.age ?? 27, 2);
+  const holdout = (p: Player) => playerValue(p) >= 66 || askOf(p) > minSalary(season, yos(p)) * 2.2;
+  for (const p of pool(w).filter(x => holdout(x) && !(x.rosterStatus ?? '').startsWith('Draft rights held by')).sort((a, b) => playerValue(b) - playerValue(a))) {
+    const ask = askOf(p), years = (p.age ?? 27) >= 31 ? 1 : 2;
+    let best: FAOffer | null = null, bu = -9;
+    for (const t of Object.values(w.teams)) {
+      if (t.id === w.meta.userTeam || rosterCount(w, t.id) >= rules(w).max) continue;
+      const most = Math.min(bestOffer(w, t.id, p, years), aiSpendLine(w, t) - teamPayroll(w, t.id));
+      if (most < ask * 0.62) continue;
+      const o: FAOffer = { team: t.id, first: Math.round(Math.min(most, ask * 0.85) / 5000) * 5000, years, raise: 0, day: F.day };
+      const u = offerUtility(w, p, o);
+      if (u > bu) { bu = u; best = o; }
+    }
+    if (best) finalize(w, p, best);
+    else p.ask = Math.max(minSalary(season, yos(p)), Math.round(ask * 0.8 / 5000) * 5000);
+  }
   for (const t of Object.values(w.teams)) {
     if (t.id === w.meta.userTeam) continue;
     // fill to the minimum roster with minimum deals, then two-way slots with young players
-    const fill = () => pool(w).filter(p => !(p.rosterStatus ?? '').startsWith('Draft rights held by') || p.draftedBy === t.id).sort((a, b) => playerValue(b) - playerValue(a));
+    const fill = () => pool(w).filter(p => (!(p.rosterStatus ?? '').startsWith('Draft rights held by') || p.draftedBy === t.id) && !holdout(p)).sort((a, b) => playerValue(b) - playerValue(a));
     let g = 0;
     while (rosterCount(w, t.id) < Math.max(rules(w).min, rules(w).max >= 15 ? 13 : 12) && g++ < 8) {
       const p = fill()[0]; if (!p) break;

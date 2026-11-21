@@ -7,6 +7,7 @@ import { fmt$ } from '../../sim/gm';
 import { makeGameplan, playerValue, positionsOf, POSITIONS, PosKey } from '../../sim/coach';
 import { courtFor, uniformFor, wordmarkFor } from '../../sim/history';
 import type { Player, World } from '../../sim/types';
+import { culture } from '../../sim/people';
 
 const POS_NAME: Record<string, string> = { PG: 'Point guard', SG: 'Shooting guard', SF: 'Small forward', PF: 'Power forward', C: 'Center' };
 const ord = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
@@ -46,6 +47,7 @@ export function TeamPage({ w, id }: { w: World; id: string }) {
             <span>Coach <b>{coach?.name ?? '—'}</b></span>
             {t.arena && <span>Home floor <b>{t.arena}</b></span>}
             <span>Owner <b>{t.owner}</b></span>
+            {culture(t) && <span>Locker room <b>{culture(t)!.label}</b>{culture(t)!.leaders[0] && w.players[culture(t)!.leaders[0]] ? ` · set by ${w.players[culture(t)!.leaders[0]].name}` : ''}</span>}
           </div>
         </div>
       </div>

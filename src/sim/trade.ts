@@ -1,5 +1,6 @@
 // Trades (F13/F22): every front office values players through its OWN eyes (noisy beliefs), its clock,
 // its positional needs, roster spots and contracts. No one is omniscient, and nobody accepts just anything.
+import { onTraded } from './people';
 import type { Player, World } from './types';
 import { withSat, signTradeCheck, satDiscount } from './signtrade';
 import type { SignTrade } from './signtrade';
@@ -176,7 +177,9 @@ export function aiMargin(w: World, offer: TradeOffer): { margin: number; getV: n
   if (offer.sat && !offer.sat.virtual) return withSat(w, offer, o => aiMargin(w, o));
   const O = w.teams[offer.other];
   // a free agent they hold rights to is worth less to them than a player under contract: he may walk anyway
-  const mul = offer.sat?.from === O.id ? { [offer.sat.pid]: satDiscount(w, offer.sat.pid, O.id) } : {};
+  const mul: Record<string, number> = offer.sat?.from === O.id ? { [offer.sat.pid]: satDiscount(w, offer.sat.pid, O.id) } : {};
+  // a star who has asked out is worth less to the team holding him: everyone knows they need to move him
+  for (const id of offer.get) if ((w.players[id] as any)?.wantsOut === O.id) mul[id] = (mul[id] ?? 1) * 0.86;
   const { getV, giveV } = sideValue(w, O.id, offer.get, offer.give, offer.getPicks, offer.givePicks, mul);
   const dPay = offer.give.reduce((s, id) => s + (w.players[id].contract?.salary ?? 0), 0) - offer.get.reduce((s, id) => s + (w.players[id].contract?.salary ?? 0), 0);
   const payPen = Math.max(0, capPayroll(w, O.id) + dPay - aiSpendLine(w, O)) / $y(40000);
@@ -281,6 +284,8 @@ export function executeTradeBetween(w: World, aId: string, bId: string, aGives: 
   const A = w.teams[aId], B = w.teams[bId];
   for (const id of aGives) { A.roster = A.roster.filter(x => x !== id); B.roster.push(id); w.players[id].team = B.id; }
   for (const id of bGives) { B.roster = B.roster.filter(x => x !== id); A.roster.push(id); w.players[id].team = A.id; }
+  for (const id of aGives) onTraded(w, id, A.id);
+  for (const id of bGives) onTraded(w, id, B.id);
   const move = (from: typeof A, to: typeof A, pk: PickRef) => {
     const p = from.picks.find(x => x.season === pk.season && x.round === pk.round && x.original === pk.original);
     if (p) { from.picks = from.picks.filter(x => x !== p); to.picks.push({ ...p, owner: to.id }); }

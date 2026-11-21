@@ -116,5 +116,6 @@ export interface World {
   scoutBudget: number; // 1..3
   log: { seq: number };
   tradeHistory: { date: string; text: string }[];
-  promises: { id: string; to: string; kind: string; made: string; due: string; status: string }[];
+  promises: { id: string; to: string; kind: string; made: string; due: string; status: string; season?: number; base?: number; text?: string; evidence?: string }[];
+  rel?: Record<string, number[]>; relNotes?: { a: string; b: string; s: number; t: string }[]; peopleVersion?: number;
 }

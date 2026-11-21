@@ -4,6 +4,7 @@ import { clamp, stream } from './rng';
 import { playerValue } from './coach';
 import { addEvent, addMessage, addNews, potentialOvr } from './world';
 import { shapeCareer, shapeDraftOutlier, seedFictionalStar, setClassPerception } from './impact';
+import { initPerson } from './people';
 import { IDENTITY_EVENTS, LOGO_FILES, alignmentFor, eraRules, expansionsFor, futureOf, logoFor, $y } from './history';
 
 const addDays = (d: string, n: number) => { const t = new Date(d + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
@@ -129,6 +130,7 @@ function decode(world: World, c: any, year: number, kind: 'prospect' | 'undrafte
   p.ovr = Math.round(playerValue(p));
   shapeCareer(p, year);
   shapeDraftOutlier(p);
+  initPerson(p, world.meta.seed);
   return p;
 }
 
@@ -184,6 +186,7 @@ function generateProspect(world: World, year: number, i: number, undrafted: bool
   };
   p.ovr = Math.round(playerValue(p));
   seedFictionalStar(p, undrafted ? 60 + i : i, world.meta.seed, year);
+  initPerson(p, world.meta.seed);
   return p;
 }
 

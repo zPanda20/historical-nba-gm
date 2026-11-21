@@ -7,6 +7,7 @@ import { useState } from 'preact/hooks';
 import { commit, toast } from '../store';
 import { potentialOvr } from '../../sim/world';
 import type { Player, World } from '../../sim/types';
+import { LockerRoom } from './Locker';
 
 export function moraleWord(m: number) { return m >= 75 ? 'Happy' : m >= 55 ? 'Content' : m >= 35 ? 'Restless' : 'Unhappy'; }
 
@@ -32,7 +33,7 @@ export function Roster() {
   const R = roles(w!);
   const open = (p: Player) => openModal('player', { id: p.id });
   return <div class="screen">
-    <div class="screen-h"><h2>Roster & development</h2><Tabs id="roster" def="roster" tabs={[{ id: 'roster', label: 'Roster' }, { id: 'depth', label: 'Depth chart' }, { id: 'stats', label: 'Season stats' }, { id: 'dev', label: 'Development' }]} />
+    <div class="screen-h"><h2>Roster & development</h2><Tabs id="roster" def="roster" tabs={[{ id: 'roster', label: 'Roster' }, { id: 'depth', label: 'Depth chart' }, { id: 'stats', label: 'Season stats' }, { id: 'dev', label: 'Development' }, { id: 'locker', label: 'Locker room' }]} />
       <div class="screen-meta">{t.roster.length} of 12 spots · payroll {fmt$(payroll(w!, t.id))}</div></div>
     {tab === 'roster' && <Panel class="fill">
       <SortTable id="roster" rows={ps} onRow={open} def="ovr:d" cols={[
@@ -50,6 +51,7 @@ export function Roster() {
       <div class="foot-note"><sup class="rc">R</sup> Reconstructed salary (simulation only). OVR is the coaching staff's day-to-day read of your own players. Click a column to sort.</div>
     </Panel>}
     {tab === 'depth' && <DepthChart w={w!} />}
+    {tab === 'locker' && <LockerRoom w={w!} />}
     {tab === 'stats' && <Panel class="fill">
       <SortTable id="rstats" rows={ps.map(p => ({ p, s: perGame(p, y) }))} onRow={o => open(o.p)} def="pts:d" cols={[
         { key: 'name', label: 'Player', cls: 'l', get: o => o.p.name, desc: false, render: o => <PlayerTile p={o.p} size={34} /> },
