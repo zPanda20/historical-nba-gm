@@ -1,6 +1,7 @@
 // Deal presentation: trade cards (every piece visible), the staff's read, and coach-request projections.
 import type { World } from '../sim/types';
 import type { TradeOffer, PickRef } from '../sim/trade';
+import type { SignTrade } from '../sim/signtrade';
 import { staffRead } from '../sim/trade';
 import { needDef, needMetric, openRequest, staffSd } from '../sim/needs';
 import { fmt$ } from '../sim/gm';
@@ -11,14 +12,16 @@ export function PickChip({ pk, owner }: { pk: PickRef; owner: string }) {
   return <span class="pick-chip"><Logo t={pk.original} size={18} /><b>{pk.season}</b> {pk.round === 1 ? '1st round' : pk.round === 2 ? '2nd round' : `Round ${pk.round}`}{pk.original !== owner ? <small> via {pk.original}</small> : null}</span>;
 }
 
-function Side({ w, tid, ids, picks, title }: { w: World; tid: string; ids: string[]; picks: PickRef[]; title: string }) {
+function Side({ w, tid, ids, picks, title, sat }: { w: World; tid: string; ids: string[]; picks: PickRef[]; title: string; sat?: SignTrade }) {
   const t = w.teams[tid];
   return <div class="deal-side">
     <div class="deal-h"><Logo t={t} size={30} /><span>{title}</span></div>
+    {sat && (() => { const p = w.players[sat.pid]; const s = seenOvr(w, p);
+      return <div class="sat-tile"><PlayerTile p={p} size={44} sub={<>Signs for {fmt$(sat.salary)} × {sat.years}{sat.raise ? `, ${(sat.raise * 100).toFixed(1)}% raises` : ''}</>} right={<span class="ovr-pill">{s.exact ? s.mid : `${s.lo}–${s.hi}`}</span>} /><em>Sign-and-trade</em></div>; })()}
     {ids.map(id => { const p = w.players[id]; const s = seenOvr(w, p);
       return <PlayerTile p={p} size={44} sub={<>{p.pos} · {p.age} yrs · {p.contract ? `${fmt$(p.contract.salary)} × ${p.contract.years}` : 'no contract'}</>} right={<span class="ovr-pill">{s.exact ? s.mid : `${s.lo}–${s.hi}`}</span>} />; })}
     {picks.map(pk => <PickChip pk={pk} owner={tid} />)}
-    {!ids.length && !picks.length && <div class="muted">Nothing</div>}
+    {!ids.length && !picks.length && !sat && <div class="muted">Nothing</div>}
   </div>;
 }
 
@@ -27,18 +30,18 @@ export function TradeCard({ w, offer, read = true }: { w: World; offer: TradeOff
   const u = w.meta.userTeam;
   return <div class="deal">
     <div class="deal-cols">
-      <Side w={w} tid={u} ids={offer.give} picks={offer.givePicks} title="We send" />
+      <Side w={w} tid={u} ids={offer.give} picks={offer.givePicks} title="We send" sat={offer.sat?.from === u ? offer.sat : undefined} />
       <div class="deal-swap">⇄</div>
-      <Side w={w} tid={offer.other} ids={offer.get} picks={offer.getPicks} title="We get" />
+      <Side w={w} tid={offer.other} ids={offer.get} picks={offer.getPicks} title="We get" sat={offer.sat && offer.sat.from !== u ? offer.sat : undefined} />
     </div>
     {read && <StaffRead w={w} offer={offer} />}
-    <NeedImpact w={w} after={[...w.teams[u].roster.filter(id => !offer.give.includes(id)), ...offer.get]} />
+    <NeedImpact w={w} after={[...w.teams[u].roster.filter(id => !offer.give.includes(id)), ...offer.get, ...(offer.sat && offer.sat.from !== u ? [offer.sat.pid] : [])]} />
   </div>;
 }
 
 /** The staff's estimate of how good a deal is for us: a point, an uncertainty band, and a verdict. */
 export function StaffRead({ w, offer }: { w: World; offer: TradeOffer }) {
-  if (!offer.give.length && !offer.get.length && !offer.givePicks.length && !offer.getPicks.length) return null;
+  if (!offer.give.length && !offer.get.length && !offer.givePicks.length && !offer.getPicks.length && !offer.sat) return null;
   const r = staffRead(w, offer);
   const X = (v: number) => `${50 + Math.max(-48, Math.min(48, v * 100))}%`;
   const quality = r.sd <= 2.6 ? 'sharp' : r.sd <= 4 ? 'solid' : r.sd <= 5.5 ? 'rough' : 'shaky';

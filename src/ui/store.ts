@@ -28,7 +28,7 @@ export interface UIState {
   toast: { text: string; id: number } | null;
   gamecast: string | null; // game id being watched
   castSpeed: number;
-  tradeDraft: { other: string; give: string[]; get: string[]; givePicks: any[]; getPicks: any[] } | null;
+  tradeDraft: { other: string; give: string[]; get: string[]; givePicks: any[]; getPicks: any[]; sat?: any } | null;
   stopRequested?: boolean;
   busyPace?: number;   // ms between steps (0 = as fast as possible)
   busyThin?: boolean;  // slim, see-through busy bar (the screen behind stays visible)

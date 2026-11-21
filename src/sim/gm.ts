@@ -1,5 +1,6 @@
 // GM layer: front-office commands, AI GM behaviour, owner, agents, coach requests (GDD §8, §11, §12, §15).
 import type { ClockState, Player, Team, World } from './types';
+import { doSignTrade } from './signtrade';
 import { rules as eraRoster, rosterCount } from './rules';
 import { clamp, sigmoid, stream } from './rng';
 import { coachRespond, playerValue } from './coach';
@@ -38,7 +39,11 @@ export { assetValue, pickValue, evaluateTrade, staffRead, aiMargin, tradeLegal, 
 export type { TradeOffer, PickRef, TradeReply } from './trade';
 
 export function executeTrade(w: World, offer: TradeOffer) {
-  const desc = executeTradeBetween(w, w.meta.userTeam, offer.other, offer.give, offer.get, offer.givePicks, offer.getPicks);
+  const u = w.meta.userTeam;
+  const s = offer.sat;
+  const desc = !s ? executeTradeBetween(w, u, offer.other, offer.give, offer.get, offer.givePicks, offer.getPicks)
+    : s.from === u ? doSignTrade(w, s, offer.other, offer.give, offer.get, offer.givePicks, offer.getPicks)
+    : doSignTrade(w, s, u, offer.get, offer.give, offer.getPicks, offer.givePicks);
   // trading away a coach's best players without his input dents trust a little
   const coach = w.coaches[w.teams[w.meta.userTeam].coach];
   if (offer.give.some(id => playerValue(w.players[id]) > 66)) coach.trustGM = clamp((coach.trustGM ?? 55) - 3, 0, 100);

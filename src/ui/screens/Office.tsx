@@ -3,7 +3,9 @@ import { birdLevel, BIRD_LABEL } from '../../sim/contracts';
 import { faState, ourOffer, offersFor, moratoriumEnd } from '../../sim/market';
 import { rules as eraRules, rosterCount, twoWayCount } from '../../sim/rules';
 import { faDays } from '../actions';
-import { bestOffer, capRules, capSeason, capRoom, fmtM } from '../../sim/cap';
+import { bestOffer, capRules, capSeason, capRoom, fmtM, minSalary, yos } from '../../sim/cap';
+import { satCandidates, defaultTerms, satYears, satConsent, satMaxRaise, satRulesText } from '../../sim/signtrade';
+import { maxFor } from '../../sim/contracts';
 import { go } from '../store';
 import { useStore, openModal, commit, toast, ui, setUI } from '../store';
 import { place, Panel, Btn, Tabs, curTab, Logo, OvrBadge, Chip, Meter, dateShort, injuryChip, PlayerTile, SortTable, seenOvr } from '../util';
@@ -35,7 +37,7 @@ function TradeFinder({ w }: { w: World }) {
   const propose = () => setReply(evaluateTrade(w, d));
   const done = (offer: any) => {
     executeTrade(w, offer);
-    setReply(null); setUI({ tradeDraft: { other: d.other, give: [], get: [], givePicks: [], getPicks: [] } });
+    setReply(null); setUI({ tradeDraft: { other: d.other, give: [], get: [], givePicks: [], getPicks: [], sat: undefined } });
     commit(); toast('Trade completed.');
   };
   const takeCounter = () => {
@@ -47,28 +49,49 @@ function TradeFinder({ w }: { w: World }) {
     <button data-nav class="tr-pick" title={d[side].includes(p.id) ? 'Take out of the deal' : 'Put in the deal'} onClick={() => toggle(side, p.id)}>{d[side].includes(p.id) ? '✓' : '+'}</button>
     <PlayerTile p={p} size={34} sub={<>{p.pos} · {p.age} · {p.contract ? `${fmt$(p.contract.salary)} × ${p.contract.years}` : '—'}</>} right={<><OvrBadge w={w} p={p} />{injuryChip(p)}</>} />
   </div>;
-  const empty = !d.give.length && !d.get.length && !d.givePicks.length && !d.getPicks.length;
+  const empty = !d.give.length && !d.get.length && !d.givePicks.length && !d.getPicks.length && !d.sat;
+  const cs = capSeason(w);
+  const satOurs = satCandidates(w, u), satTheirs = satCandidates(w, O.id);
+  const pickSat = (p: Player, from: string) => set({ sat: d.sat?.pid === p.id ? undefined : defaultTerms(w, p, from) });
+  const setSat = (patch: any) => set({ sat: { ...d.sat, ...patch } });
+  const SatRows = ({ ps, from }: { ps: Player[]; from: string }) => ps.length ? <div class="sat-list"><div class="sat-h">Sign-and-trade: unsigned free agents {from === u ? 'we hold rights to' : 'they hold rights to'}</div>
+    {ps.sort((a, b) => playerValue(b) - playerValue(a)).map(p => <div class={`tr-p ${d.sat?.pid === p.id ? 'on' : ''}`}>
+      <button data-nav class="tr-pick" title={d.sat?.pid === p.id ? 'Take out of the deal' : 'Sign him and put him in the deal'} onClick={() => pickSat(p, from)}>{d.sat?.pid === p.id ? '✓' : '+'}</button>
+      <PlayerTile p={p} size={34} sub={<>{p.pos} · {p.age} · asking {fmt$(p.ask ?? 0)} · {offersFor(w, p.id).length} offer{offersFor(w, p.id).length === 1 ? '' : 's'}</>} right={<OvrBadge w={w} p={p} />} />
+    </div>)}</div> : null;
   return <div class="trade">
-    <div class="tr-teams">{others.map(t => <button data-nav class={`tr-t ${t.id === d.other ? 'on' : ''}`} onClick={() => set({ other: t.id, get: [], getPicks: [] })}><Logo t={t} size={28} /><span>{place(t)}</span><small>{t.w}–{t.l}</small></button>)}</div>
+    <div class="tr-teams">{others.map(t => <button data-nav class={`tr-t ${t.id === d.other ? 'on' : ''}`} onClick={() => set({ other: t.id, get: [], getPicks: [], sat: d.sat?.from === u ? d.sat : undefined })}><Logo t={t} size={28} /><span>{place(t)}</span><small>{t.w}–{t.l}</small></button>)}</div>
     <Panel title={<><Logo t={U} size={26} /> Our roster</>} class="tr-col">
       {U.roster.map(id => w.players[id]).sort((a, b) => playerValue(b) - playerValue(a)).map(p => <PRow p={p} side="give" />)}
+      <SatRows ps={satOurs} from={u} />
       <div class="tr-picks">{picks(u).map(p => <button data-nav class={`pk ${d.givePicks.some((x: PK) => pkKey(x) === pkKey(p)) ? 'on' : ''}`} onClick={() => toggleP('givePicks', p)}>{p.no ? <><b>No. {p.no}</b> tonight</> : <>{p.season} {p.round === 1 ? '1st' : '2nd'}</>}{p.original !== u ? ` (${p.original})` : ''}</button>)}</div>
     </Panel>
     <Panel title={<><Logo t={O} size={26} /> {O.city} {O.name}</>} class="tr-col">
       <GmCard w={w} tid={O.id} />
       {O.roster.map(id => w.players[id]).sort((a, b) => playerValue(b) - playerValue(a)).map(p => <PRow p={p} side="get" />)}
+      <SatRows ps={satTheirs} from={O.id} />
       <div class="tr-picks">{picks(O.id).map(p => <button data-nav class={`pk ${d.getPicks.some((x: PK) => pkKey(x) === pkKey(p)) ? 'on' : ''}`} onClick={() => toggleP('getPicks', p)}>{p.no ? <><b>No. {p.no}</b> tonight</> : <>{p.season} {p.round === 1 ? '1st' : '2nd'}</>}{p.original !== O.id ? ` (${p.original})` : ''}</button>)}</div>
     </Panel>
     <div class="tr-deal">
       {empty ? <div class="tr-empty"><b>Build a deal</b><p>Press + next to players and picks on either side. Your staff will tell you what they think of it before you call {O.gm}.</p></div>
         : <TradeCard w={w} offer={d} />}
+      {d.sat && (() => { const sp = w.players[d.sat.pid]; const [lo, hi] = satYears(cs); const to = d.sat.from === u ? O.id : u; const mx = maxFor(sp, d.sat.from, cs); const step = Math.max(5000, Math.round(capRules(cs).cap * 0.005 / 5000) * 5000);
+        const cons = satConsent(w, sp, to, d.sat);
+        return <div class="sat-terms">
+          <div class="sat-h">Sign-and-trade terms: {sp.name} signs with {w.teams[d.sat.from].name}, then joins {w.teams[to].name}</div>
+          <div class="stepper"><span>First-year salary</span><Btn kind="sm ghost" onClick={() => setSat({ salary: Math.max(minSalary(cs, yos(sp)), d.sat.salary - step) })}>−</Btn><b>{fmt$(d.sat.salary)}</b><Btn kind="sm ghost" onClick={() => setSat({ salary: Math.min(mx ?? Infinity, d.sat.salary + step) })}>+</Btn></div>
+          <div class="stepper"><span>Years</span>{Array.from({ length: hi - lo + 1 }, (_, i) => lo + i).map(y => <button data-nav class={`btn sm ${d.sat.years === y ? '' : 'ghost'}`} onClick={() => setSat({ years: y })}>{y}</button>)}</div>
+          <div class="stepper"><span>Annual raise</span><Btn kind="sm ghost" onClick={() => setSat({ raise: Math.max(0, Math.round((d.sat.raise - 0.005) * 1000) / 1000) })}>−</Btn><b>{(d.sat.raise * 100).toFixed(1)}%</b><Btn kind="sm ghost" onClick={() => setSat({ raise: Math.min(satMaxRaise(cs), Math.round((d.sat.raise + 0.005) * 1000) / 1000) })}>+</Btn></div>
+          <div class={`cap-line ${cons.ok ? 'ok' : 'bad'}`}>{cons.text}</div>
+          <div class="muted small">{satRulesText(cs)}</div>
+        </div>; })()}
       {reply && <div class={`tr-reply ${reply.accept ? 'ok' : ''}`}>{reply.reason}</div>}
       <div class="row-btns">
         {closedHard ? <Chip kind="bad">{closedHard}</Chip>
           : reply?.accept ? <Btn kind="big" auto onClick={() => done(d)}>Shake on it</Btn>
             : reply?.counter ? <><Btn kind="big" auto onClick={takeCounter}>Agree: {reply.counter.label}</Btn><Btn kind="ghost" onClick={() => setReply(null)}>Keep working</Btn></>
               : <Btn kind="big" disabled={empty || !phoneOpen(w, O.id).open} onClick={propose}>Call {O.gm.split(' ').slice(-1)[0]}</Btn>}
-        {!empty && <Btn kind="ghost" onClick={() => set({ give: [], get: [], givePicks: [], getPicks: [] })}>Clear</Btn>}
+        {!empty && <Btn kind="ghost" onClick={() => set({ give: [], get: [], givePicks: [], getPicks: [], sat: undefined })}>Clear</Btn>}
       </div>
     </div>
   </div>;

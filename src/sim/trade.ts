@@ -1,6 +1,8 @@
 // Trades (F13/F22): every front office values players through its OWN eyes (noisy beliefs), its clock,
 // its positional needs, roster spots and contracts. No one is omniscient, and nobody accepts just anything.
 import type { Player, World } from './types';
+import { withSat, signTradeCheck, satDiscount } from './signtrade';
+import type { SignTrade } from './signtrade';
 import { rules as eraRoster, rosterLimit, isTwoWay } from './rules';
 import { tradeSalaryCheck, aiSpendLine, teamPayroll as capPayroll } from './cap';
 import { $y } from './history';
@@ -11,7 +13,7 @@ import { clockWeights, marketSalary, payroll, fmt$, TRADE_DEADLINE } from './gm'
 import { staffSd, unitErr, sdFor } from './needs';
 
 export interface PickRef { season: number; round: number; original: string; no?: number }
-export interface TradeOffer { other: string; give: string[]; get: string[]; givePicks: PickRef[]; getPicks: PickRef[]; }
+export interface TradeOffer { other: string; give: string[]; get: string[]; givePicks: PickRef[]; getPicks: PickRef[]; sat?: SignTrade }
 
 // ------------------------------------------------------------------ GM personalities and patience
 export interface GmProfile { max: number; regen: number; tough: number; style: string }
@@ -122,11 +124,11 @@ function packageSum(vals: number[]) {
 }
 
 /** How team `tid` values a deal in which it gives `gives` (+picks) and receives `gets` (+picks). */
-export function sideValue(w: World, tid: string, gives: string[], gets: string[], givePicks: PickRef[], getPicks: PickRef[]) {
+export function sideValue(w: World, tid: string, gives: string[], gets: string[], givePicks: PickRef[], getPicks: PickRef[], giveMul: Record<string, number> = {}) {
   const t = w.teams[tid];
   const after = [...t.roster.filter(id => !gives.includes(id)), ...gets];
   const inV = gets.map(id => assetValue(w, w.players[id], tid) * needMult(w, tid, after, w.players[id]));
-  const outV = gives.map(id => assetValue(w, w.players[id], tid));
+  const outV = gives.map(id => assetValue(w, w.players[id], tid) * (giveMul[id] ?? 1));
   let getV = packageSum(inV) + getPicks.reduce((s, p) => s + pickValue(w, p, tid), 0);
   const giveV = packageSum(outV) + givePicks.reduce((s, p) => s + pickValue(w, p, tid), 0);
   // a body over the roster limit means waiving someone they like
@@ -139,6 +141,7 @@ export function sideValue(w: World, tid: string, gives: string[], gets: string[]
 }
 
 export function tradeLegal(w: World, offer: TradeOffer): string | null {
+  if (offer.sat && !offer.sat.virtual) return signTradeCheck(w, offer) ?? withSat(w, offer, o => tradeLegal(w, o));
   const S = w.season;
   const U = w.teams[w.meta.userTeam], O = w.teams[offer.other];
   if (S.phase === 'regular' && S.day > TRADE_DEADLINE(S.year)) return 'The trade deadline has passed.';
@@ -157,7 +160,7 @@ export function tradeLegal(w: World, offer: TradeOffer): string | null {
   const std = (ids: string[]) => ids.filter(id => !isTwoWay(w.players[id])).length;
   const uAfter = std(U.roster) - std(offer.give) + std(offer.get), oAfter = std(O.roster) - std(offer.get) + std(offer.give);
   if (uAfter > cap || oAfter > cap) return `That would leave a roster over the limit (${eraRoster(w).label}).`;
-  if (uAfter < 8 || oAfter < 8) return 'That would leave a team with too few players.';
+  if ((S.phase === 'regular' || S.phase === 'preseason') && (uAfter < 8 || oAfter < 8)) return 'That would leave a team with too few players.';
   if (!offer.give.length && !offer.givePicks.length) return 'You need to offer something.';
   if (!offer.get.length && !offer.getPicks.length) return 'Ask for something in return.';
   return salaryMatch(w, U.id, O.id, offer.give, offer.get);
@@ -169,9 +172,12 @@ export function salaryMatch(w: World, aId: string, bId: string, aGives: string[]
 }
 
 /** The other GM's true margin (their beliefs, needs, budget, appetite for change). */
-export function aiMargin(w: World, offer: TradeOffer) {
+export function aiMargin(w: World, offer: TradeOffer): { margin: number; getV: number; giveV: number; payPen: number } {
+  if (offer.sat && !offer.sat.virtual) return withSat(w, offer, o => aiMargin(w, o));
   const O = w.teams[offer.other];
-  const { getV, giveV } = sideValue(w, O.id, offer.get, offer.give, offer.getPicks, offer.givePicks);
+  // a free agent they hold rights to is worth less to them than a player under contract: he may walk anyway
+  const mul = offer.sat?.from === O.id ? { [offer.sat.pid]: satDiscount(w, offer.sat.pid, O.id) } : {};
+  const { getV, giveV } = sideValue(w, O.id, offer.get, offer.give, offer.getPicks, offer.givePicks, mul);
   const dPay = offer.give.reduce((s, id) => s + (w.players[id].contract?.salary ?? 0), 0) - offer.get.reduce((s, id) => s + (w.players[id].contract?.salary ?? 0), 0);
   const payPen = Math.max(0, capPayroll(w, O.id) + dPay - aiSpendLine(w, O)) / $y(40000);
   const friction = (2 + giveV * 0.06) * gmProfile(w, O.id).tough;
@@ -236,14 +242,19 @@ export function evaluateTrade(w: World, offer: TradeOffer): TradeReply {
 }
 
 /** Our staff's read of a deal: point estimate, uncertainty band, and a guess at the other side's appetite. */
-export function staffRead(w: World, offer: TradeOffer) {
+export function staffRead(w: World, offer: TradeOffer): ReturnType<typeof staffReadInner> {
+  if (offer.sat && !offer.sat.virtual) return withSat(w, offer, o => staffReadInner(w, o));
+  return staffReadInner(w, offer);
+}
+function staffReadInner(w: World, offer: TradeOffer) {
   const u = w.meta.userTeam;
+  const ownFa = offer.sat?.from === u ? offer.sat.pid : null;
   const sd = offer.get.length ? offer.get.reduce((a, id) => a + sdFor(w, w.players[id]), 0) / offer.get.length : staffSd(w);
   const calc = (shift: number) => {
     const U = w.teams[u];
     const after = [...U.roster.filter(id => !offer.give.includes(id)), ...offer.get];
     const inV = offer.get.map(id => { const p = w.players[id]; return assetValue(w, p, u, believedOvr(w, p, u) + shift * sdFor(w, p)) * needMult(w, u, after, p); });
-    const outV = offer.give.map(id => assetValue(w, w.players[id], u));
+    const outV = offer.give.map(id => assetValue(w, w.players[id], u) * (id === ownFa ? satDiscount(w, id, u) : 1));
     let g = packageSum(inV) + offer.getPicks.reduce((s, p) => s + pickValue(w, p, u), 0) * (1 + shift * sd / 25);
     const o = packageSum(outV) + offer.givePicks.reduce((s, p) => s + pickValue(w, p, u), 0);
     const lim = eraRoster(w).max, std = after.filter(id => !isTwoWay(w.players[id]));

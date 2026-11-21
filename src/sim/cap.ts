@@ -193,7 +193,7 @@ export function bestOffer(w: World, tid: string, p: Player, years = 2): number {
 export function tradeSalaryCheck(w: World, tid: string, outSal: number, inSal: number): string | null {
   const R = capRules(capSeason(w));
   if (!R.hasCap || inSal <= outSal) return null;
-  const after = teamPayroll(w, tid) - outSal + inSal;
+  const after = teamPayroll(w, tid) + capHolds(w, tid) - outSal + inSal; // summer cap holds count as team salary
   if (after <= R.cap) return null;
   const t = w.teams[tid];
   if (R.apron2 && after > R.apron2) return `${t.name}: over the second apron after this deal, they cannot take back more salary than they send.`;
@@ -237,7 +237,8 @@ export function aiSpendLine(w: World, t: Team): number {
   const R = capRules(capSeason(w));
   if (!R.hasCap) return t.payrollBudget ?? R.cap * 1.15;
   const chase = t.clock === 'Win Now' || t.clock === 'Contending';
-  if (R.tax) return chase ? Math.min(R.apron2 ?? R.apron1 ?? R.tax * 1.12, (R.apron1 ?? R.tax * 1.06)) : R.tax * 0.98;
+  // contenders live around the tax line (a real star can push them toward the apron); everyone else stays under it
+  if (R.tax) return chase ? Math.min(R.apron1 ?? R.tax * 1.06, R.tax * 1.03) : R.tax * 0.95;
   return R.cap * (chase ? 1.3 : 1.12);
 }
 

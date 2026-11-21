@@ -2,6 +2,7 @@
 // interested team, players choosing between them (money, years, a winner, a role, loyalty), qualifying offers and offer
 // sheets for restricted free agents, and the late-summer scramble for minimum deals and two-way spots.
 import type { ContractOption, Player, Team, World } from './types';
+import { aiSignAndTrades } from './signtrade';
 import { clamp, stream } from './rng';
 import { playerValue } from './coach';
 import { addEvent, addMessage, addNews, projectedWins } from './world';
@@ -219,6 +220,7 @@ export function faAdvanceDay(w: World): string[] {
   F.day++;
   w.season.day = faDate(w, F.day);
   aiOffers(w, log);
+  aiSignAndTrades(w, log);
   // offer sheets the user ignored lapse unmatched
   for (const [pid, sh] of Object.entries(F.sheets)) if (sh.due < F.day && sh.team === w.meta.userTeam) { resolveSheet(w, pid, false, log); log.push(`${w.players[pid]?.name}'s offer sheet went unmatched.`); }
   const ready = F.day >= moratoriumEnd(capSeason(w));

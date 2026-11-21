@@ -1,5 +1,6 @@
 // Game-flow actions the UI can trigger. All simulation goes through the sim modules; the UI never scripts outcomes.
 import type { GameRec, Message, World } from '../sim/types';
+import { answerSatProposal } from '../sim/signtrade';
 import { migrateContracts } from '../sim/contracts';
 import { exerciseOption, declineOption, resolveSheet, withdrawOffer, faAdvanceDay, faState, pendingDecisions, faActive, finishFreeAgency } from '../sim/market';
 import { rosterRules } from '../sim/rules';
@@ -236,6 +237,8 @@ export function runCommand(m: Message, a: { label: string; cmd: string; arg?: an
       resolve(); toast(`${p.name} renounced: his cap hold is off our books.`); break;
     }
     case 'withdrawQO': { const p = w.players[a.arg.pid]; delete (p as any).rfa; p.rosterStatus = `Free agent (was ${w.teams[w.meta.userTeam].abbr})`; m.actions = m.actions?.filter(x => x.cmd !== 'withdrawQO'); toast(`${p.name} is now an unrestricted free agent.`); commit(); return; }
+    case 'satAccept': { const t = answerSatProposal(w, a.arg.pid, true); resolve(); toast(t); break; }
+    case 'satDecline': { const t = answerSatProposal(w, a.arg.pid, false); resolve(); toast(t); break; }
     case 'exerciseOption': { exerciseOption(w, a.arg.pid); resolve(); toast(`Option exercised: ${w.players[a.arg.pid].name} stays.`); break; }
     case 'declineOption': { declineOption(w, a.arg.pid); resolve(); toast(`Option declined: ${w.players[a.arg.pid].name} is a free agent.`); break; }
     case 'matchSheet': { resolveSheet(w, a.arg.pid, true); resolve(); toast(`We matched the offer sheet for ${w.players[a.arg.pid].name}.`); break; }
