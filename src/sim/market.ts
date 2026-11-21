@@ -185,9 +185,13 @@ function aiOffers(w: World, log: string[]) {
     if (F.day <= 1) for (const p of fas.filter(x => (x as any).bird === t.id && !ourOffer(w, x.id, t.id))) {
       const v = playerValue(p);
       const ask = Math.min(p.ask ?? 0, maxFor(p, t.id, season) ?? Infinity);
-      const fits = teamPayroll(w, t.id) + earmarked(w, t.id) + ask <= aiSpendLine(w, t) * (v >= 78 ? 1.12 : 1);
+      // owners stretch to keep their own good players, most of all young ones
+      const age = p.age ?? 30;
+      const fits = teamPayroll(w, t.id) + earmarked(w, t.id) + ask <= aiSpendLine(w, t) * (v >= 78 ? (age < 28 ? 1.22 : 1.12) : v >= 68 && age <= 25 ? 1.15 : v >= 70 ? 1.05 : 1);
       const level = birdLevel(p, t.id, season);
-      if (v >= 54 && (p.age ?? 30) < 34 && fits && level) {
+      // where the team is in its cycle decides whom it keeps: rebuilders keep the young, the middle class lets 30-somethings go
+      const keepAge = t.clock === 'Rebuilding' ? (v >= 76 ? 29 : 27) : t.clock === 'Building' ? (v >= 74 ? 32 : 30) : 33;
+      if (v >= 54 && age <= keepAge && fits && level) {
         const yrs = v >= 74 && (p.age ?? 30) < 30 ? 4 + rng.int(0, 1) : rng.int(1, 3);
         makeOffer(w, t.id, p, { first: Math.max(minSalary(season, yos(p)), ask), years: Math.min(yrs, R.maxYearsOwn), raise: maxRaise(season, true) * 0.75 });
       } else (p as any).renounced = t.id; // renounced: frees the cap hold
@@ -207,6 +211,8 @@ function aiOffers(w: World, log: string[]) {
       if (made >= (F.day < 4 ? 2 : 1) || budget <= 0) break;
       if (ourOffer(w, p.id, t.id) || F.sheets[p.id] || (p.rosterStatus ?? '').startsWith('Draft rights held by') && p.draftedBy !== t.id) continue;
       const v = playerValue(p);
+      const pa = p.age ?? 30;
+      if ((t.clock === 'Rebuilding' && pa >= 29 || t.clock === 'Building' && pa >= 32 && v < 74) && (p.ask ?? 0) > minSalary(season, yos(p)) * 1.5) continue; // not a veteran's market
       const rivals = offersFor(w, p.id).length;
       const ask = p.ask ?? 0;
       // bid up a contested player a little, never past the cap rules
@@ -281,7 +287,7 @@ export function closeFreeAgency(w: World, log: string[] = []) {
       // a good player nobody has room for takes what a team can still do (an exception, a short deal) rather than sit out
       const R = capRules(season);
       const ceiling = Math.max(aiSpendLine(w, t), R.tax ? R.tax * 1.02 : R.cap * 1.25) - teamPayroll(w, t.id);
-      const most = pass === 0 ? Math.min(bestOffer(w, t.id, p, years), ceiling) : bestOffer(w, t.id, p, years); // second pass: contenders pay the tax for a player this good
+      const most = pass === 0 ? Math.min(bestOffer(w, t.id, p, years), ceiling) : Math.min(bestOffer(w, t.id, p, years), (R.apron1 ?? (R.tax ? R.tax * 1.06 : R.cap * 1.4)) - teamPayroll(w, t.id)); // second pass: a team pays the tax for a player this good, never past the first apron
       if (most < minSalary(season, yos(p)) * 1.5 || (pass === 0 && most < ask * 0.3) || (pass === 1 && playerValue(p) < 70)) continue;
       const o: FAOffer = { team: t.id, first: Math.round(Math.min(most, ask * 0.85) / 5000) * 5000, years, raise: 0, day: F.day };
       const u = offerUtility(w, p, o);

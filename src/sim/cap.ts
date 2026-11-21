@@ -34,7 +34,7 @@ export function capRules(season: number): CapRules {
   const cap = capFor(season);
   const hasCap = season >= 1984;
   const tax = season >= 2002 ? (TAX_LINE[season] ?? Math.round(cap * 1.215)) : null;
-  const ap = APRONS[season] ?? (season > 2025 ? [cap * 1.18, cap * 1.252] as [number, number] : null);
+  const ap = APRONS[season] ?? (season > 2025 ? [cap * 1.267, cap * 1.344] as [number, number] : null) // 2025-26 ratios: first apron 126.7% of the cap, second 134.4%;
   const apron1 = season >= 2023 ? ap![0] : season >= 2011 ? tax! + Math.round(cap * 0.07) : null;
   const apron2 = season >= 2023 ? ap![1] : null;
   return {
@@ -233,13 +233,27 @@ export function assessLuxuryTax(w: World, season: number): Record<string, number
 }
 
 /** What AI front offices treat as their spending line for a season: under the tax unless they are chasing a title. */
+/** Big markets can carry more payroll; small markets less (owner wealth is not modelled beyond this). */
+const BIG = new Set(['LAL', 'NYK', 'GSW', 'BOS', 'CHI', 'LAC', 'BKN', 'NJN', 'PHI', 'HOU', 'DAL', 'MIA', 'TOR']);
+const SMALL = new Set(['MEM', 'SAC', 'NOP', 'NOH', 'UTA', 'OKC', 'MIL', 'IND', 'CHA', 'ORL', 'SAS', 'POR', 'MIN', 'KCK', 'VAN', 'CHH', 'SEA']);
+export const marketTier = (t: Team) => (BIG.has(t.abbr) ? 1 : SMALL.has(t.abbr) ? -1 : 0);
+
+/** How far an AI owner will let payroll go, by where the team is in its cycle and how big its market is.
+ *  Rebuilders stay near the cap, the middle class sits between the cap and the tax, contenders around the tax line,
+ *  and a win-now team in a big market will go toward the second apron. */
 export function aiSpendLine(w: World, t: Team): number {
   const R = capRules(capSeason(w));
   if (!R.hasCap) return t.payrollBudget ?? R.cap * 1.15;
-  const chase = t.clock === 'Win Now' || t.clock === 'Contending';
-  // contenders live around the tax line (a real star can push them toward the apron); everyone else stays under it
-  if (R.tax) return chase ? Math.min(R.apron1 ?? R.tax * 1.06, R.tax * 1.03) : R.tax * 0.95;
-  return R.cap * (chase ? 1.3 : 1.12);
+  const m = marketTier(t), c = t.clock ?? 'Building';
+  if (R.tax) {
+    const top = R.apron2 ? R.apron2 * 0.985 : R.apron1 ?? R.tax * 1.08;
+    const line = c === 'Win Now' ? R.tax * 1.04 + (m > 0 ? (top - R.tax * 1.04) : m < 0 ? -R.tax * 0.03 : (top - R.tax * 1.04) * 0.4)
+      : c === 'Contending' ? R.tax * (1 + m * 0.03)
+      : c === 'Building' ? R.cap + (R.tax - R.cap) * (0.45 + m * 0.15)
+      : R.cap * (1.02 + m * 0.03);
+    return Math.round(line);
+  }
+  return Math.round(R.cap * ((c === 'Win Now' ? 1.3 : c === 'Contending' ? 1.18 : c === 'Building' ? 1.06 : 0.98) + m * 0.05));
 }
 
 /** Market value of a player as a share of the cap, held between the minimum and his maximum. */

@@ -8,6 +8,8 @@ import { eraRules, salaryScale, setEraYear, $y } from './history';
 import { arcDev, hypeOf } from './impact';
 import { cultureDevMul, declineMul, mentality, peopleOffseason, peopleSeasonStart, peopleWeek } from './people';
 import { dynastyOffseason, dynastyWeek, settleSuperteams } from './dynasty';
+import { aiPayrollTrim, aiSalaryDumps, updateAiClocks } from './payroll';
+import { tradeDeadline } from './rules';
 import { makeContract } from './contracts';
 import { assessLuxuryTax, capRules, rookieScale, teamPayroll, fmtM, minSalary, yos } from './cap';
 const minSalaryFor = (season: number, p: Player) => minSalary(season, yos(p));
@@ -119,6 +121,7 @@ export function advanceDay(world: World): string {
   if (S.phase === 'regular') {
     if (S.day < (world.season.games[0]?.date ?? S.day)) { S.day = addDays(S.day, 1); healDay(world); return 'Off day'; }
     if (isMonday(S.day)) { peopleWeek(world); dynastyWeek(world); }
+    if (S.day === tradeDeadline(S.year)) for (const d of aiSalaryDumps(world, true)) addNews(world, 'Deadline dump', `${d}. Getting under the tax.`, 'transactions');
     const today = S.games.filter(g => g.date === S.day && !g.played);
     for (const g of today) playGame(world, g);
     pruneGames(world);
@@ -435,6 +438,7 @@ function endSeason(world: World, runnerUp: string) {
   world.pastSeasons.push({ year: S.year, champion: S.champion!, runnerUp, finals: fin ? `${Math.max(fin.wHi, fin.wLo)}–${Math.min(fin.wHi, fin.wLo)}` : undefined, awards: S.awards ?? {}, standings: standings(world).map(t => ({ team: t.id, w: t.w, l: t.l })),
     names: Object.fromEntries(Object.values(world.teams).map(t => [t.id, { abbr: t.abbr, city: t.city, name: t.name, logo: t.logoKey ?? t.abbr }])) } as any);
   ownerSeasonReview(world);
+  updateAiClocks(world, true); // the draft and free agency follow each team's read of where it is
   setupDraft(world);
 }
 
@@ -685,6 +689,9 @@ export function startNextSeason(world: World) {
   for (const id of world.freeAgents) { const p = world.players[id]; if (p && p.ask) p.ask = Math.max(minSalaryFor(year, p), Math.round(p.ask * 0.55 / 5000) * 5000); }
   injectClass(world, year + 1);
   compactRetired(world);
+  updateAiClocks(world);
+  for (const d of aiSalaryDumps(world)) addNews(world, 'Salary dump', `${d}. Payroll relief.`, 'transactions');
+  for (const d of aiPayrollTrim(world)) addNews(world, 'Payroll trimmed', `${d}.`, 'transactions');
   const proj = projectedWins(world);
   Object.assign(projectedWinsCache, proj);
   world.owner.expectedWins = proj[world.meta.userTeam];
