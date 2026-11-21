@@ -1,6 +1,7 @@
 // Coaching engine (GDD §8): the coach — never the GM — sets lineups, rotations and the action policy.
 import type { Coach, Player, Team, World } from './types';
 import { clamp, sigmoid, z } from './rng';
+import { ERA } from './history';
 
 export interface Gameplan {
   starters: string[];          // 5 player ids
@@ -28,7 +29,9 @@ export function eraActionPrior(season: number): Record<string, number> {
 export function playerValue(p: Player): number {
   const r = p.r;
   const big = ['PF', 'C'].includes(p.pos) ? 1 : 0;
-  const off = 0.24 * r.ins + 0.17 * r.mid + 0.14 * r.pass + 0.10 * r.drive + 0.07 * r.handle + 0.08 * r.iq + 0.05 * r.ft;
+  // the three-pointer is worth more as the league learns to use it (none before 1979, a core skill by the 2010s)
+  const w3 = ERA.year < 1979 ? 0 : clamp(0.025 + (ERA.year - 1980) * 0.0019, 0.025, 0.09);
+  const off = 0.22 * r.ins + (0.17 - w3 * 0.5) * r.mid + w3 * (r.three ?? 0) + 0.14 * r.pass + 0.10 * r.drive + 0.07 * r.handle + 0.08 * r.iq + 0.05 * r.ft;
   const def = big ? 0.07 * r.intD + 0.05 * r.dreb + 0.04 * r.blk + 0.03 * r.oreb : 0.07 * r.perD + 0.05 * r.stl + 0.03 * r.dreb;
   return off + def + 0.04 * r.ath + 0.03 * r.usage;
 }

@@ -1,5 +1,7 @@
 // Game-flow actions the UI can trigger. All simulation goes through the sim modules; the UI never scripts outcomes.
 import type { GameRec, Message, World } from '../sim/types';
+import { migrateSave } from '../sim/impact';
+import { potentialOvr } from '../sim/world';
 import { createWorld, addMessage, addEvent } from '../sim/world';
 import { advanceDay, addDays, runDraftUntilUser, makePick, startNextSeason, projectedWinsCache, nextUnplayedDate } from '../sim/league';
 import { runDelegates, delegated, offseasonRoster } from '../sim/delegate';
@@ -33,6 +35,7 @@ export function enterLoaded(w: World) {
   setEraYear(w.season.year);
   if (!(w as any).shown) markShownNow(w);
   syncLogos(w);
+  migrateSave(w, potentialOvr);
   tidyMessages(w);
   Object.assign(projectedWinsCache, projectedWins(w));
   setWorld(w);

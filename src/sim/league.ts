@@ -5,6 +5,9 @@ import { clamp, stream, sigmoid } from './rng';
 import { playerValue } from './coach';
 import { addEvent, addMessage, addNews, buildSchedule, initScouting, potentialOvr, projectedWins, teamStrength } from './world';
 import { eraRules, salaryScale, setEraYear, $y } from './history';
+import { arcDev, hypeOf } from './impact';
+import { assessLuxuryTax, capRules, rookieScale, teamPayroll, fmtM, minSalary, yos } from './cap';
+const minSalaryFor = (season: number, p: Player) => minSalary(season, yos(p));
 import { applyAlignment, applyIdentityEvents, coachingCarousel, compactRetired, generateSchedule, injectClass, injectUndrafted, rollPicks, runExpansion } from './seasons';
 import { aiDailyMoves, generateDailyMessages, ownerSeasonReview, resolveExpiring } from './gm';
 
@@ -183,10 +186,27 @@ export function seedConference(world: World, conf: string, n?: number): string[]
 const mkSeries = (id: string, round: number, conf: string, hi: string, lo: string, bestOf: number, slot: number): Series =>
   ({ id, round, conf, hi, lo, wHi: 0, wLo: 0, bestOf, games: [], slot } as Series);
 
+/** Luxury tax on the payroll at the end of the regular season (first assessed 2002-03). The owner pays it, and notices. */
+function chargeLuxuryTax(world: World) {
+  const y = world.season.year;
+  const R = capRules(y);
+  if (!R.tax) return;
+  const bills = assessLuxuryTax(world, y);
+  const u = world.meta.userTeam;
+  const payers = Object.keys(bills).length;
+  if (payers) addNews(world, `${payers} team${payers > 1 ? 's' : ''} pay the luxury tax`, Object.entries(bills).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t, b]) => `${world.teams[t].name} ${fmtM(b)}`).join(' · '), 'league');
+  if (bills[u]) {
+    const bill = bills[u];
+    world.owner.satisfaction = clamp(world.owner.satisfaction - Math.min(25, bill / R.cap * 60), 0, 100);
+    addMessage(world, { date: world.season.day, from: world.owner.name, role: 'Owner', subject: `Luxury tax bill: ${fmtM(bill)}`, body: `Our payroll finished at ${fmtM(teamPayroll(world, u))}, ${fmtM(teamPayroll(world, u) - R.tax)} over the ${fmtM(R.tax)} tax line. That bill comes out of my pocket. It had better be buying a title.`, urgent: 2, tag: 'Owner' });
+  }
+}
+
 export function startPlayoffs(world: World) {
   const S = world.season;
   const R = eraRules(S.year);
   S.phase = 'playoffs';
+  chargeLuxuryTax(world);
   const series: Series[] = [];
   const seeds: Record<string, string[]> = {};
   for (const conf of ['East', 'West']) {
@@ -509,8 +529,9 @@ export function aiPickFor(world: World, tid: string): string | null {
   for (const id of D.pool) {
     const p = world.players[id];
     // team-specific belief: truth + team bias + noise (F11), never the real career
-    const belief = (stream(world.meta.seed, 'belief', tid, id).normal(0, 5.5));
-    const now = p.ovr + belief, pot = potentialOvr(p) + belief * 1.4 + stream(world.meta.seed, 'beliefP', tid, id).normal(0, 6);
+    const belief = (stream(world.meta.seed, 'belief', tid, id).normal(0, 3));
+    const hype = hypeOf(p);
+    const now = p.ovr + belief + hype * 0.5, pot = potentialOvr(p) + belief * 1.3 + stream(world.meta.seed, 'beliefP', tid, id).normal(0, 3.5) + hype * 0.85;
     const v = wNow * now + (1 - wNow) * pot + rng.normal(0, 1.5);
     if (v > bv) { bv = v; best = id; }
   }
@@ -528,8 +549,11 @@ export function makePick(world: World, pid: string) {
   // first two rounds sign; later picks are rights only (can sign in free agency)
   if (slot.round <= 2) {
     team.roster.push(pid); p.team = slot.team;
-    const sal = slot.round === 1 ? $y(Math.max(40000, 150000 - slot.pick * 3500)) : $y(45000);
-    p.contract = { salary: sal, years: slot.round === 1 ? 3 : 2, known: null, provenance: 'RECONSTRUCTED — simulation only (rookie deal)', rookie: true, signed: world.season.day };
+    // 1995 on: the rookie scale (four seasons for first-rounders); before that, slot-based negotiated deals
+    const scale = rookieScale(world.season.year + 1, slot.pick, slot.round);
+    const sal = scale ? scale.salary : slot.round === 1 ? $y(Math.max(40000, 150000 - slot.pick * 3500)) : $y(45000);
+    p.contract = { salary: sal, years: scale ? scale.years : slot.round === 1 ? 3 : 2, known: null, provenance: scale ? 'Rookie scale (simulated)' : 'RECONSTRUCTED — simulation only (rookie deal)', rookie: true, signed: world.season.day };
+    (p.contract as any).fresh = true;
   } else {
     p.rosterStatus = `Draft rights held by ${slot.team}`;
     if (!world.freeAgents.includes(pid)) world.freeAgents.push(pid);
@@ -570,16 +594,19 @@ export function developPlayers(world: World) {
     const rng = stream(world.meta.seed, 'development', world.season.year, p.id);
     const age = (p.age ?? 25);
     const minutes = (p.stats ?? []).filter(s => s.season === world.season.year).reduce((a, s) => a + s.min, 0);
-    const opp = clamp(0.55 + minutes / 3000, 0.55, 1.25);
+    const arc = arcDev(p, age);
+    const opp = Math.max(arc.oppMin, clamp(0.55 + minutes / 3000, 0.55, 1.25));
     const coach = p.team ? world.coaches[world.teams[p.team].coach] : null;
     const coachFit = coach ? 0.85 + coach.development / 250 : 0.8;
     for (const k of Object.keys(p.r) as (keyof Player['r'])[]) {
       if (k === 'hgt') continue;
       const C = p.ceil[k]?.mu ?? p.r[k];
-      const eta = age <= 21 ? 0.34 : age <= 23 ? 0.28 : age <= 25 ? 0.2 : age <= 27 ? 0.1 : 0.04;
+      const eta = Math.max(arc.etaMin, age <= 21 ? 0.34 : age <= 23 ? 0.28 : age <= 25 ? 0.2 : age <= 27 ? 0.1 : 0.04);
       const physical = ['ath', 'stamina', 'blk', 'oreb', 'drive', 'perD'].includes(k);
-      const decline = age >= 30 ? (physical ? 1.5 + (age - 30) * 0.75 : 0.55 + (age - 30) * 0.45) : age >= 28 && physical ? 0.5 : 0;
-      const delta = eta * opp * coachFit * Math.max(0, C - p.r[k]) - decline + rng.normal(0, 1.6);
+      const decline = arc.declineMul * (age >= 30 ? (physical ? 1.5 + (age - 30) * 0.75 : 0.55 + (age - 30) * 0.45) : age >= 28 && physical ? 0.5 : 0);
+      // grow toward the ceiling; drift above it is pulled back, so noise cannot walk a player past his talent
+      const gap = C - p.r[k];
+      const delta = (gap > 0 ? eta * opp * coachFit * gap : 0.35 * gap) - decline + rng.normal(0, 1.6);
       p.r[k] = Math.round(clamp(p.r[k] + delta, 15, 99));
     }
     p.ovr = Math.round(playerValue(p));
@@ -627,11 +654,18 @@ export function startNextSeason(world: World) {
   const k = salaryScale(year) / prevScale;
   for (const t of Object.values(world.teams)) t.payrollBudget = Math.round((t.payrollBudget ?? 0) * k / 5000) * 5000 || Math.round(payrollOf(world, t.id) * 1.08);
   world.owner.budget = Math.round(world.owner.budget * k / 10000) * 10000;
+  { // in the cap era the owner's line sits between the cap and the tax (or a cap multiple before the tax existed)
+    const R = capRules(year);
+    if (R.hasCap) { const hi = R.tax ? R.tax * 1.04 : R.cap * 1.3; world.owner.budget = Math.round(clamp(world.owner.budget, R.cap * 0.98, hi) / 10000) * 10000;
+      for (const t of Object.values(world.teams)) t.payrollBudget = Math.round(clamp(t.payrollBudget ?? R.cap, R.cap * 0.95, hi) / 5000) * 5000; }
+  }
   const R = eraRules(year);
   const sched = world.schedules[String(year)];
   const historical = sched && Object.keys(world.teams).length === 22 ? buildSchedule(year, sched, world.teams, { NJN: 'NYN' }) : null;
   world.season = { year, phase: 'preseason', day: addDays(R.start, -6), games: historical && historical.length > 800 ? historical : generateSchedule(world, year), playoffs: null, draft: null };
   rollPicks(world);
+  // whoever is still unsigned when camp opens lowers his price; by midseason most take what is offered
+  for (const id of world.freeAgents) { const p = world.players[id]; if (p && p.ask) p.ask = Math.max(minSalaryFor(year, p), Math.round(p.ask * 0.55 / 5000) * 5000); }
   injectClass(world, year + 1);
   compactRetired(world);
   const proj = projectedWins(world);

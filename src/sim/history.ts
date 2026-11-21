@@ -206,17 +206,23 @@ export function eraStyle(season: number, seed?: string): { pace: number; tpa: nu
 }
 
 /** Average player salary relative to 1976-77 (approximate public averages; future grows ~4%/yr). */
-const SAL: [number, number][] = [[1976, 1], [1980, 1.3], [1984, 2.2], [1988, 3.7], [1990, 5.5], [1993, 9], [1996, 14], [1999, 20], [2002, 28], [2005, 32], [2008, 37],
-  [2011, 38], [2014, 36], [2016, 50], [2018, 55], [2020, 60], [2022, 68], [2024, 78], [2026, 86]];
-export function salaryScale(season: number): number {
-  if (season >= 2026) return 86 * Math.pow(1.04, season - 2026);
-  for (let i = 0; i < SAL.length - 1; i++) if (season >= SAL[i][0] && season <= SAL[i + 1][0]) {
-    const k = (season - SAL[i][0]) / (SAL[i + 1][0] - SAL[i][0]);
-    return SAL[i][1] * Math.pow(SAL[i + 1][1] / SAL[i][1], k);
-  }
-  return 1;
+/** Salary cap by season (season = the year it starts). 1984-85 onward are the league's figures; before the cap existed the
+ *  value is a reference level (about what an average payroll implied) used only to price contracts and set owner budgets. */
+export const CAP_HISTORY: Record<number, number> = {
+  1976: 1.75e6, 1977: 1.85e6, 1978: 2.0e6, 1979: 2.2e6, 1980: 2.45e6, 1981: 2.7e6, 1982: 3.0e6, 1983: 3.3e6,
+  1984: 3.6e6, 1985: 4.233e6, 1986: 4.945e6, 1987: 6.164e6, 1988: 7.232e6, 1989: 9.802e6, 1990: 11.871e6, 1991: 12.5e6, 1992: 14.0e6, 1993: 15.175e6,
+  1994: 15.964e6, 1995: 23.0e6, 1996: 24.363e6, 1997: 26.9e6, 1998: 30.0e6, 1999: 34.0e6, 2000: 35.5e6, 2001: 42.5e6, 2002: 40.271e6, 2003: 43.84e6,
+  2004: 43.87e6, 2005: 49.5e6, 2006: 53.135e6, 2007: 55.63e6, 2008: 58.68e6, 2009: 57.7e6, 2010: 58.044e6, 2011: 58.044e6, 2012: 58.044e6, 2013: 58.679e6,
+  2014: 63.065e6, 2015: 70.0e6, 2016: 94.143e6, 2017: 99.093e6, 2018: 101.869e6, 2019: 109.14e6, 2020: 109.14e6, 2021: 112.414e6, 2022: 123.655e6,
+  2023: 136.021e6, 2024: 140.588e6, 2025: 154.647e6, 2026: 165.97e6,
+};
+/** The cap (or pre-cap reference level) for a season; after 2026 it grows about 5.5% a year (projection, not a CBA figure). */
+export function capFor(season: number): number {
+  if (season < 1976) return CAP_HISTORY[1976];
+  if (season > 2026) return Math.round(CAP_HISTORY[2026] * Math.pow(1.055, season - 2026) / 1000) * 1000;
+  return CAP_HISTORY[season];
 }
-/** Module-level era cursor so pure valuation helpers can scale money without threading the world through. */
+export function salaryScale(season: number): number { return capFor(season) / CAP_HISTORY[1976]; }
 export const ERA = { year: 1976, scale: 1 };
 export function setEraYear(year: number) { ERA.year = year; ERA.scale = salaryScale(year); }
 /** Scale a 1976-dollar amount to the current season, rounded to a sensible step. */

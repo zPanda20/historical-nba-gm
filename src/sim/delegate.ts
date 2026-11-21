@@ -1,5 +1,6 @@
 // Delegation: hand parts of the job to your staff. With everything delegated the franchise runs itself.
 import type { Player, World } from './types';
+import { bestOffer, capSeason, maxSalary, minSalary, yos } from './cap';
 import { $y } from './history';
 import { playerValue } from './coach';
 import { addMessage } from './world';
@@ -36,13 +37,14 @@ const inSeason = (w: World) => ['preseason', 'regular', 'playoffs'].includes(w.s
 
 function tryResign(w: World, p: Player): boolean {
   const v = playerValue(p), age = p.age ?? 28;
-  const ask = p.ask ?? marketSalary(p);
+  const ask = Math.min(p.ask ?? marketSalary(p, capSeason(w)), maxSalary(capSeason(w), yos(p), p.contract?.salary ?? 0) ?? Infinity);
   const worth = (v >= 50 && age <= 31) || v >= 60;
   if (!worth || ask - (p.contract?.salary ?? 0) > budgetRoom(w) + $y(40000)) return false;
   const yrs = age <= 27 ? 3 : age <= 30 ? 2 : 1;
   for (const sal of [ask, Math.round(ask * 1.08 / 5000) * 5000]) {
     if (playerAccepts(w, p, w.meta.userTeam, sal, yrs).ok) {
       p.contract = { salary: sal, years: yrs + (w.season.phase === 'freeagency' ? 0 : p.contract?.years ?? 0), known: null, provenance: 'Signed in this save (simulated)', signed: w.season.day };
+      delete (p as any).bird;
       return true;
     }
   }
@@ -51,7 +53,9 @@ function tryResign(w: World, p: Player): boolean {
 
 function bestFreeAgent(w: World, room: number, filter: (p: Player) => boolean = () => true) {
   const u = w.meta.userTeam;
-  return w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && rightsOk(p, u) && (p.ask ?? marketSalary(p)) <= Math.max(room, $y(40000)) && filter(p))
+  // only players we can actually fit under this era's rules, at (nearly) what they ask
+  const fits = (p: Player) => { const ask = p.ask ?? marketSalary(p, capSeason(w)); const most = bestOffer(w, u, p, 2); return most >= ask * 0.9 || most <= minSalary(capSeason(w), yos(p)) && ask <= minSalary(capSeason(w), yos(p)) * 2.2; };
+  return w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && rightsOk(p, u) && (p.ask ?? marketSalary(p)) <= Math.max(room, $y(40000)) && fits(p) && filter(p))
     .sort((a, b) => (b.draftedBy === u ? 3 : 0) + playerValue(b) - ((a.draftedBy === u ? 3 : 0) + playerValue(a)))[0];
 }
 
@@ -87,7 +91,7 @@ export function runDelegates(w: World) {
     const healthy = t.roster.filter(id => !(w.players[id].injury && w.players[id].injury!.daysLeft > 5)).length;
     if (t.roster.length < 12 && (t.roster.length < 11 || healthy < 10)) {
       const p = bestFreeAgent(w, budgetRoom(w));
-      if (p) { const sal = Math.max($y(30000), p.ask ?? marketSalary(p)); if (playerAccepts(w, p, u, sal, 1).ok) { signPlayer(w, p.id, u, sal, 1); log(w, 'Assistant GM', `signed ${p.name} to fill a roster spot (${fmt$(sal)})`, true); } }
+      if (p) { const sal = Math.min(p.ask ?? marketSalary(p, capSeason(w)), bestOffer(w, u, p, 2)) || minSalary(capSeason(w), yos(p)); if (playerAccepts(w, p, u, sal, 1).ok) { if (signPlayer(w, p.id, u, sal, 1).ok) log(w, 'Assistant GM', `signed ${p.name} to fill a roster spot (${fmt$(sal)})`, true); } }
     }
   }
   // coach's request, via free agency (once a week)
@@ -102,11 +106,10 @@ export function runDelegates(w: World) {
     let best: Player | null = null, bestM = now + 0.75;
     for (const p of cands) { const after = t.roster.length >= 12 && worst ? [...t.roster.filter(id => id !== worst.id), p.id] : [...t.roster, p.id]; const m = needMetric(w, after, req.key); if (m > bestM) { bestM = m; best = p; } }
     if (best) {
-      const sal = Math.max($y(30000), best.ask ?? marketSalary(best));
+      const sal = Math.min(best.ask ?? marketSalary(best, capSeason(w)), bestOffer(w, u, best, 2)) || minSalary(capSeason(w), yos(best));
       if (playerAccepts(w, best, u, sal, 1).ok) {
         if (t.roster.length >= 12 && worst) releasePlayer(w, worst.id);
-        signPlayer(w, best.id, u, sal, 1);
-        log(w, 'Assistant GM', `signed ${best.name} for the coach's request${t.roster.length >= 12 && worst ? ` (released ${worst.name})` : ''}`, true);
+        if (signPlayer(w, best.id, u, sal, 1).ok) log(w, 'Assistant GM', `signed ${best.name} for the coach's request${t.roster.length >= 12 && worst ? ` (released ${worst.name})` : ''}`, true);
       }
     }
   }
@@ -129,9 +132,16 @@ export function offseasonRoster(w: World) {
   while (t.roster.filter(id => (w.players[id].contract?.years ?? 0) > 0).length < 12 && guard++ < 25) {
     const p = bestFreeAgent(w, budgetRoom(w), x => !skip.has(x.id));
     if (!p) break;
-    const sal = Math.max($y(30000), p.ask ?? marketSalary(p));
-    if (playerAccepts(w, p, u, sal, p.age && p.age < 26 ? 2 : 1).ok) { signPlayer(w, p.id, u, sal, p.age && p.age < 26 ? 2 : 1); log(w, 'Assistant GM', `signed ${p.name} (${fmt$(sal)})`); }
+    const sal = Math.min(p.ask ?? marketSalary(p, capSeason(w)), bestOffer(w, u, p, 2)) || minSalary(capSeason(w), yos(p));
+    if (playerAccepts(w, p, u, sal, p.age && p.age < 26 ? 2 : 1).ok) { if (signPlayer(w, p.id, u, sal, p.age && p.age < 26 ? 2 : 1).ok) log(w, 'Assistant GM', `signed ${p.name} (${fmt$(sal)})`); else skip.add(p.id); }
     else skip.add(p.id);
+  }
+  // late summer: fringe veterans take a minimum deal to stay in the league
+  const mn = (p: Player) => minSalary(capSeason(w), yos(p));
+  const late = w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && rightsOk(p, u) && (p.ask ?? marketSalary(p)) <= mn(p) * 2.5).sort((a, b) => playerValue(b) - playerValue(a));
+  for (const p of late) {
+    if (t.roster.filter(id => (w.players[id].contract?.years ?? 0) > 0).length >= 12) break;
+    if (signPlayer(w, p.id, u, mn(p), 1).ok) log(w, 'Assistant GM', `signed ${p.name} to a minimum deal`);
   }
   const signed = () => t.roster.filter(id => (w.players[id].contract?.years ?? 0) > 0);
   while (signed().length > 12) {

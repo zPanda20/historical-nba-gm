@@ -16,7 +16,7 @@ export const needDef = (key: string) => NEEDS.find(n => n.key === key)!;
 /** Front-office staff precision: better scouting budget and a sharper coach narrow every estimate. */
 export function staffSd(w: World): number {
   const c = w.coaches[w.teams[w.meta.userTeam].coach];
-  return clamp(6.4 - 1.15 * w.scoutBudget - (c.tactics - 50) / 22 - (c.adaptability - 50) / 45, 1.6, 7.5);
+  return clamp(3.3 - 0.55 * w.scoutBudget - (c.tactics - 50) / 45 - (c.adaptability - 50) / 90, 0.9, 4);
 }
 /** Persistent per-player unit error for our staff (so better staff shrinks the same error, not a fresh roll). */
 export function unitErr(w: World, pid: string, k = 'ovr'): number {
@@ -27,7 +27,9 @@ export const reportsOn = (w: World, p: Player) => ((w as any).scoutReports?.[p.i
 /** Our uncertainty about a player we don't coach: staff quality, how much we've scouted him, how much tape exists. */
 export function sdFor(w: World, p: Player): number {
   if (p.team === w.meta.userTeam) return 0;
-  const tape = p.sampleMin > 1500 ? 0.8 : p.sampleMin > 400 ? 1 : 1.35;
+  // tape: what he showed before the league plus every NBA minute since
+  const mins = (p.sampleMin ?? 0) + (p.stats ?? []).reduce((s, x) => s + (x.min ?? 0), 0);
+  const tape = mins > 4000 ? 0.6 : mins > 1500 ? 0.8 : mins > 400 ? 1 : 1.3;
   return staffSd(w) * tape / Math.sqrt(1 + 0.6 * reportsOn(w, p));
 }
 /** How our staff sees a rating: exact for our own players, otherwise biased by our (shrinking) error. */

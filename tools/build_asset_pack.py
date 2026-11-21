@@ -37,30 +37,35 @@ for r in rows:
     r['fs'] = yr(r['first_season']); r['ls'] = yr(r['last_season']); r['path'] = SRC + r['file'].replace('\\', '/')
 
 def clean(im, peel=1, tol=28):
+    """Cut a logo out of its background.
+    Art that already carries transparency is left alone (flooding it ate white letters: WARR ORS, Pace s). Art on a flat
+    background is flooded from every border pixel that matches the background, so enclosed whites (letter fills, the
+    Celtics roundel) survive. Only true specks are dropped."""
     a = np.array(im.convert('RGBA')).astype(int)
     h, w, _ = a.shape
-    for _ in range(peel):
-        seeds = []
-        for (y0, x0, dy, dx) in [(0, 0, 1, 1), (0, w - 1, 1, -1), (h - 1, 0, -1, 1), (h - 1, w - 1, -1, -1)]:
-            y, x = y0, x0
-            while 0 <= y < h and 0 <= x < w and a[y, x, 3] < 200: y += dy; x += dx
-            if 0 <= y < h and 0 <= x < w: seeds.append((y, x))
-        cols = [a[y, x, :3] for y, x in seeds]
-        if len(cols) < 3 or not all(np.abs(c - cols[0]).sum() < 45 for c in cols): break
-        diff = np.abs(a[:, :, :3] - cols[0]).sum(axis=2)
-        near = (diff < tol) & (a[:, :, 3] > 0)
-        lab, n = ndimage.label(near)
-        ids = [lab[y, x] for y, x in seeds if lab[y, x] > 0]
-        bg = np.isin(lab, ids)
-        a[bg, 3] = 0
-        edge = ndimage.binary_dilation(bg, iterations=1) & ~bg
-        a[edge, 3] = (a[edge, 3] * np.clip(diff[edge] / 110, 0.3, 1)).astype(int)
+    clear = (a[:, :, 3] < 16).mean()
+    border = np.concatenate([a[0, :, :], a[-1, :, :], a[:, 0, :], a[:, -1, :]])
+    if clear < 0.03 and (border[:, 3] > 200).mean() > 0.9:
+        for _ in range(peel):
+            opaque = border[border[:, 3] > 200][:, :3]
+            bgc = np.median(opaque, axis=0)
+            if (np.abs(opaque - bgc).sum(axis=1) < 45).mean() < 0.85: break  # no single flat background colour
+            diff = np.abs(a[:, :, :3] - bgc).sum(axis=2)
+            near = (diff < tol) & (a[:, :, 3] > 0)
+            lab, n = ndimage.label(near)
+            edge_ids = set(np.unique(np.concatenate([lab[0, :], lab[-1, :], lab[:, 0], lab[:, -1]]))) - {0}
+            bg = np.isin(lab, list(edge_ids))
+            a[bg, 3] = 0
+            ring = ndimage.binary_dilation(bg, iterations=1) & ~bg
+            a[ring, 3] = (a[ring, 3] * np.clip(diff[ring] / 110, 0.35, 1)).astype(int)
+            border = np.concatenate([a[1, :, :], a[-2, :, :], a[:, 1, :], a[:, -2, :]])
+            if (border[:, 3] > 200).mean() < 0.5: break
     alpha = a[:, :, 3] > 30
     lab, n = ndimage.label(alpha)
     if n > 1:
         sizes = ndimage.sum(alpha, lab, range(1, n + 1))
         for i, sz in enumerate(sizes, 1):
-            if sz < sizes.max() * 0.012: a[lab == i, 3] = 0
+            if sz < max(12, alpha.size * 0.0004): a[lab == i, 3] = 0
     out = Image.fromarray(a.astype('uint8'))
     bb = out.getbbox()
     return out.crop(bb) if bb else out

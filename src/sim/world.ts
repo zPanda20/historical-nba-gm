@@ -4,6 +4,7 @@ import { MODEL_VERSION, stream, clamp } from './rng';
 import { playerValue } from './coach';
 import { eraRules, setEraYear } from './history';
 import { classData, injectClass } from './seasons';
+import { shapeCareer, shapeDraftOutlier, hypeOf } from './impact';
 
 export const SCHEMA = 1;
 
@@ -40,6 +41,7 @@ export function createWorld(data: any, opts: { userTeam: string; mode: 'career' 
     if (useClasses && p.kind === 'prospect' && p.draftClass) continue; // classes.json supersedes the 1977-80 classes in the base pack
     players[p.id] = { ...p, injury: null, stats: [], awards: [], morale: 60, fatigueSeason: 0 };
     players[p.id].ovr = Math.round(playerValue(players[p.id]));
+    shapeCareer(players[p.id], 1976); shapeDraftOutlier(players[p.id]);
   }
   const coaches: Record<string, Coach> = {};
   for (const c of data.coaches as Coach[]) coaches[c.id] = { ...c, trustGM: 55 };
@@ -59,6 +61,7 @@ export function createWorld(data: any, opts: { userTeam: string; mode: 'career' 
     owner: { name: teams[opts.userTeam].owner, patience: 55, wantsWins: 60, budget: 0, satisfaction: 60, expectedWins: 41, objective: '' },
     clock: 'Contending', gmRep: 50, scoutBudget: 2, log: { seq: 0 }, tradeHistory: [], promises: [],
   };
+  (world as any).impactVersion = 1; // created with career shapes and current scouting
   world.season.games = buildSchedule(1976, data.schedules['1976'], teams, {});
   if (useClasses) injectClass(world, 1977);
   // franchise clocks + owner expectations from projected strength
@@ -84,7 +87,7 @@ export function initScouting(world: World) {
   const rng = stream(world.meta.seed, 'scouting', 'init', world.season.year);
   const cls = world.draftClasses[String(world.season.year + 1)] ?? [];
   // department bias: this front office overrates athletes, underrates cognition (S1 error classes), randomised per save
-  const athBias = rng.normal(2, 3), iqBias = rng.normal(-2, 3);
+  const athBias = rng.normal(1, 1.5), iqBias = rng.normal(-1, 1.5);
   for (const id of cls) {
     const p = world.players[id];
     if (!p) continue;
@@ -92,10 +95,12 @@ export function initScouting(world: World) {
     const keyVal = (o: number) => o;
     const trueNow = p.ovr, truePot = potentialOvr(p);
     const bias = (p.r.ath - 55) / 15 * athBias + (p.r.iq - 55) / 15 * iqBias;
-    const noise = rng.normal(0, 6), noiseP = rng.normal(0, 8);
-    const mid = keyVal(trueNow + bias + noise), midP = truePot + bias + noiseP;
-    p.scout['now'] = { lo: Math.round(mid - 9), hi: Math.round(mid + 9), mid: Math.round(mid), reports: 0 };
-    p.scout['pot'] = { lo: Math.round(midP - 14), hi: Math.round(midP + 14), mid: Math.round(midP), reports: 0 };
+    // the league's consensus read travels with every department: a prospect everyone misjudged starts misjudged here too
+    const hype = hypeOf(p);
+    const noise = rng.normal(0, 3), noiseP = rng.normal(0, 4);
+    const mid = keyVal(trueNow + bias + noise + hype * 0.5), midP = truePot + bias + noiseP + hype;
+    p.scout['now'] = { lo: Math.round(mid - 4), hi: Math.min(99, Math.round(mid + 4)), mid: Math.round(mid), reports: 0 };
+    p.scout['pot'] = { lo: Math.round(midP - 6), hi: Math.min(99, Math.round(midP + 6)), mid: Math.min(99, Math.round(midP)), reports: 0 };
   }
 }
 

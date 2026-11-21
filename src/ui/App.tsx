@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useState } from 'preact/hooks';
+import { Finances } from './screens/Finances';
 import { useStore, setUI, go, closeModal, SECTIONS, ui, getWorld, Screen } from './store';
 import { installHoverFocus, isTyping, moveSelection, focusFirst } from './nav';
 import { teamTheme } from './theme';
@@ -70,7 +71,7 @@ function onKey(e: KeyboardEvent) {
     setUI({ rafters: !ui.rafters });
     return;
   }
-  if (/^[1-8]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+  if (/^[1-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
     if (ui.modal || ui.gamecast) return;
     e.preventDefault();
     go(SECTIONS[+e.key - 1].id as Screen);
@@ -122,6 +123,7 @@ export function App() {
             {u.screen === 'league' && <League />}
             {u.screen === 'games' && <Games />}
             {u.screen === 'people' && <People />}
+            {u.screen === 'finances' && <Finances />}
           </>}
         </main>
         {u.gamecast && <Gamecast id={u.gamecast} />}

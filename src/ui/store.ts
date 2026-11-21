@@ -3,7 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import type { World } from '../sim/types';
 import { saveWorld } from './saves';
 
-export type Screen = 'home' | 'roster' | 'staff' | 'office' | 'draft' | 'league' | 'games' | 'people';
+export type Screen = 'home' | 'roster' | 'staff' | 'office' | 'draft' | 'league' | 'games' | 'people' | 'finances';
 export const SECTIONS: { id: Screen; label: string; key: string }[] = [
   { id: 'home', label: 'Home', key: '1' },
   { id: 'roster', label: 'Roster & Dev', key: '2' },
@@ -13,6 +13,7 @@ export const SECTIONS: { id: Screen; label: string; key: string }[] = [
   { id: 'league', label: 'League', key: '6' },
   { id: 'games', label: 'Games', key: '7' },
   { id: 'people', label: 'People', key: '8' },
+  { id: 'finances', label: 'Finances', key: '9' },
 ];
 
 export interface Modal { kind: string; arg?: any }

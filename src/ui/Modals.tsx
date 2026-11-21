@@ -1,4 +1,5 @@
 import { useState } from 'preact/hooks';
+import { signingCheck, capSeason, capRules, capRoom, teamPayroll, maxSalary, minSalary, yos, fmtM, noteSigning } from '../sim/cap';
 import { $y } from '../sim/history';
 import { SeasonCard } from './screens/League';
 import { TeamPage } from './screens/TeamPage';
@@ -71,6 +72,7 @@ function PlayerModal({ w, id }: { w: World; id: string }) {
             {p.scout && !p.team && <div class="rg wide"><h4>Prospect read</h4>
               <div class="rr"><span>Ready now</span><b class="nw">{p.scout.now.lo}–{p.scout.now.hi}</b></div>
               <div class="rr"><span>Ceiling</span><b class="nw">{p.scout.pot.lo}–{p.scout.pot.hi}</b></div></div>}
+            {(p as any).preDraft && (!p.team || (p.draftClass ?? 0) >= w.season.year) && <div class="predraft wide"><h5>Pre-draft consensus</h5><p>{(p as any).preDraft}</p></div>}
             {GROUPS.map(([g, ks]) => <div class="rg"><h4>{g}</h4>{ks.map(([k, l]) => {
               const mid = seenRating(w, p, k), half = Math.max(2, sdFor(w, p) * 1.3);
               const lo = Math.round(mid - half), hi = Math.round(mid + half);
@@ -136,8 +138,11 @@ function ScoutBox({ w, p }: { w: World; p: Player }) {
 function OfferModal({ w, pid, msgId }: { w: World; pid: string; msgId?: string }) {
   const p = w.players[pid];
   const u = w.meta.userTeam;
-  const askV = p.ask ?? marketSalary(p);
+  const cs = capSeason(w), R = capRules(cs);
+  const mxS = maxSalary(cs, yos(p), p.team === u ? p.contract?.salary ?? 0 : 0), mnS = minSalary(cs, yos(p));
+  const askV = Math.min(p.ask ?? marketSalary(p, cs), mxS ?? Infinity);
   const [sal, setSal] = useState(Math.round(askV / 5000) * 5000);
+  const step = Math.max(5000, Math.round(R.cap * 0.005 / 5000) * 5000);
   const [yrs, setYrs] = useState(Math.min(3, Math.max(1, (p.age ?? 27) >= 31 ? 2 : 3)));
   const [res, setRes] = useState<{ ok: boolean; text: string } | null>(null);
   const t = w.teams[u];
@@ -145,11 +150,13 @@ function OfferModal({ w, pid, msgId }: { w: World; pid: string; msgId?: string }
   const inSeason = w.season.phase === 'regular' || w.season.phase === 'playoffs' || w.season.phase === 'preseason';
   const full = !own && t.roster.length >= (inSeason ? 12 : 15);
   const tries = (p as any).offerTries ?? 0;
+  const legal = signingCheck(w, u, p, sal, own && !inSeason ? yrs : yrs);
   const go_ = () => {
+    if (!legal.ok) { setRes({ ok: false, text: legal.reason ?? 'Not allowed under the cap rules.' }); return; }
     const r = playerAccepts(w, p, u, sal, yrs);
     (p as any).offerTries = tries + 1;
     if (r.ok) {
-      if (own) p.contract = { salary: sal, years: yrs + (w.season.phase === 'freeagency' ? 0 : p.contract?.years ?? 0), known: null, provenance: 'Signed in this save (simulated)', signed: w.season.day };
+      if (own) { p.contract = { salary: sal, years: yrs + (w.season.phase === 'freeagency' ? 0 : p.contract?.years ?? 0), known: null, provenance: 'Signed in this save (simulated)', signed: w.season.day }; delete (p as any).bird; noteSigning(w, u, legal.via); }
       else signPlayer(w, pid, u, sal, yrs);
       const m = msgId ? w.messages.find(x => x.id === msgId) : w.messages.find(x => !x.resolved && x.subject.includes(p.name) && x.role === 'Agent');
       if (m) m.resolved = true;
@@ -164,18 +171,22 @@ function OfferModal({ w, pid, msgId }: { w: World; pid: string; msgId?: string }
       <div>
         <div class="li"><span>Asking</span><b>{fmt$(askV)} / yr</b></div>
         <div class="li"><span>Age · position</span><b>{p.age} · {p.pos}</b></div>
-        <div class="li"><span>Payroll now</span><b>{fmt$(w.teams[u].roster.reduce((s, id) => s + (w.players[id].contract?.salary ?? 0), 0))} of {fmt$(w.owner.budget)}</b></div>
+        <div class="li"><span>Payroll {cs}–{String(cs + 1).slice(2)}</span><b>{fmt$(teamPayroll(w, u))}{R.hasCap ? ` · cap ${fmtM(R.cap)}` : ` · owner budget ${fmt$(w.owner.budget)}`}</b></div>
+        {R.hasCap && <div class="li"><span>Cap room</span><b>{fmtM(capRoom(w, u))}</b></div>}
+        <div class="li"><span>{mxS ? 'Max · min' : 'League minimum'}</span><b>{mxS ? `${fmtM(mxS)} · ${fmtM(mnS)}` : fmtM(mnS)}</b></div>
       </div>
     </div>
     {res?.ok ? <><div class="reply ok">{res.text}</div><div class="row-btns"><Btn kind="big" auto onClick={closeModal}>Done</Btn></div></> : <>
       <div class="stepper"><span>Salary per year</span>
-        <Btn kind="sm ghost" onClick={() => setSal(Math.max($y(30000), sal - $y(10000)))}>−</Btn><b>{fmt$(sal)}</b><Btn kind="sm ghost" onClick={() => setSal(sal + $y(10000))}>+</Btn></div>
+        <Btn kind="sm ghost" onClick={() => setSal(Math.max(mnS, sal - step))}>−</Btn><b>{fmt$(sal)}</b><Btn kind="sm ghost" onClick={() => setSal(Math.min(mxS ?? Infinity, sal + step))}>+</Btn>
+        {legal.most != null && !legal.ok && <Btn kind="sm ghost" onClick={() => setSal(legal.most!)}>Most we can offer</Btn>}</div>
+      <div class={`cap-line ${legal.ok ? 'ok' : 'bad'}`}>{legal.ok ? ({ room: 'Fits under the cap.', bird: 'Bird rights: we can go over the cap to keep him.', rookie: 'Draft pick: rookie contract.', mle: 'Uses our mid-level exception.', tpmle: 'Uses the taxpayer mid-level exception.', roomexc: 'Uses the room exception.', exception: 'Uses the $1m exception.', min: 'Minimum contract: always allowed.', budget: 'Within the owner\'s budget (no cap in this era).' } as any)[legal.via!] : legal.reason}</div>
       <div class="stepper"><span>Years</span>
-        {[1, 2, 3, 4, 5].map(y => <button data-nav class={`btn sm ${yrs === y ? '' : 'ghost'}`} onClick={() => setYrs(y)}>{y}</button>)}</div>
+        {[1, 2, 3, 4, 5, 6, 7].filter(y => y <= (own ? R.maxYearsOwn : R.maxYearsOther) && y <= 5 + (R.maxYearsOwn > 5 ? 2 : 0)).map(y => <button data-nav class={`btn sm ${yrs === y ? '' : 'ghost'}`} onClick={() => setYrs(y)}>{y}</button>)}</div>
       {!own && <NeedImpact w={w} after={[...t.roster, p.id]} />}
       {full && <div class="reply bad">Roster is full ({t.roster.length}). Release someone first.</div>}
       {res && <div class="reply">{res.text}</div>}
-      <div class="row-btns"><Btn kind="big" auto disabled={full} onClick={go_}>Make the offer</Btn><Btn kind="ghost" onClick={closeModal}>Walk away</Btn></div>
+      <div class="row-btns"><Btn kind="big" auto disabled={full || !legal.ok} onClick={go_}>Make the offer</Btn><Btn kind="ghost" onClick={closeModal}>Walk away</Btn></div>
       <div class="muted small">Agents weigh money, role, years and whether you can win. Lowballing repeatedly makes them dig in.</div>
     </>}
   </Shell>;

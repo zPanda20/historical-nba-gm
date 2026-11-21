@@ -2,7 +2,8 @@
 import type { Coach, GameRec, Player, Team, World } from './types';
 import { clamp, stream } from './rng';
 import { playerValue } from './coach';
-import { addEvent, addMessage, addNews } from './world';
+import { addEvent, addMessage, addNews, potentialOvr } from './world';
+import { shapeCareer, shapeDraftOutlier, seedFictionalStar, setClassPerception } from './impact';
 import { IDENTITY_EVENTS, LOGO_FILES, alignmentFor, eraRules, expansionsFor, futureOf, logoFor, $y } from './history';
 
 const addDays = (d: string, n: number) => { const t = new Date(d + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
@@ -126,6 +127,8 @@ function decode(world: World, c: any, year: number, kind: 'prospect' | 'undrafte
     kind: 'prospect', sampleMin: c.m ?? 0, headshot: false, contract: null, draftClass: year, injury: null, stats: [], awards: [], morale: 60, fatigueSeason: 0,
   };
   p.ovr = Math.round(playerValue(p));
+  shapeCareer(p, year);
+  shapeDraftOutlier(p);
   return p;
 }
 
@@ -180,6 +183,7 @@ function generateProspect(world: World, year: number, i: number, undrafted: bool
     kind: 'prospect', sampleMin: 0, headshot: false, contract: null, draftClass: year, injury: null, stats: [], awards: [], morale: 60, fatigueSeason: 0,
   };
   p.ovr = Math.round(playerValue(p));
+  seedFictionalStar(p, undrafted ? 60 + i : i, world.meta.seed, year);
   return p;
 }
 
@@ -191,6 +195,7 @@ export function injectClass(world: World, year: number) {
   const rows: any[] = CLASS_DATA?.classes?.[key] ?? [];
   if (rows.length) {
     for (const c of rows) { if (world.players[c.id]) continue; const p = decode(world, c, year, 'prospect'); world.players[p.id] = p; ids.push(p.id); }
+    setClassPerception(world, ids, potentialOvr);
   } else if (year > 2026 || !CLASS_DATA) {
     const n = eraRules(year - 1).draftRounds * Math.max(30, Object.keys(world.teams).length) + 4;
     for (let i = 0; i < n; i++) { const p = generateProspect(world, year, i, false); world.players[p.id] = p; ids.push(p.id); }

@@ -7,11 +7,16 @@ import { executeTradeBetween, aiProposeTrade, aiAiTrades } from './trade';
 import type { TradeOffer } from './trade';
 import { openJobMarket } from './jobs';
 import { $y } from './history';
+import { hypeOf } from './impact';
+import { ERA } from './history';
+import { capRules, capSeason, signingCheck, noteSigning, bestOffer, addDeadMoney, rollDeadMoney, teamPayroll, marketValue, maxSalary, yos, aiSpendLine, minSalary } from './cap';
+import type { SignCheck } from './cap';
 import { checkCoachRequest, makeCoachRequest, openRequest, worstNeed, needDef } from './needs';
 
 export const TRADE_DEADLINE = (year: number) => `${year + 1}-02-15`; // alpha assumption, not a verified 1977 rule
 export const fmt$ = (n: number) => n >= 1e6 ? `$${(n / 1e6).toFixed(2)}m` : `$${Math.round(n / 1000)}k`;
-export const payroll = (w: World, tid: string) => w.teams[tid].roster.reduce((s, id) => s + (w.players[id]?.contract?.salary ?? 0), 0);
+/** Payroll on the books for the cap season, dead money included. */
+export const payroll = (w: World, tid: string) => teamPayroll(w, tid);
 
 // ------------------------------------------------------------------ valuation (F13 / F22)
 export function clockWeights(c: ClockState | undefined) {
@@ -19,11 +24,9 @@ export function clockWeights(c: ClockState | undefined) {
 }
 /** Unsigned late-round picks are only available to the team holding their rights. */
 export const rightsOk = (p: Player, tid: string) => !(p.rosterStatus ?? '').startsWith('Draft rights held by') || p.draftedBy === tid;
-export function marketSalary(p: Player): number {
-  const v = playerValue(p), a = p.age ?? 27;
-  let s = Math.exp(10.9 + 0.085 * (v - 48));
-  if (a >= 32) s *= 0.8; if (a <= 22) s *= 0.9;
-  return $y(clamp(s, 30000, 700000));
+/** What a player would ask on the open market for `season` (the cap year), within that era's minimum and maximum. */
+export function marketSalary(p: Player, season = ERA.year): number {
+  return marketValue(season, playerValue(p), p.age ?? 27, yos(p));
 }
 export { assetValue, pickValue, evaluateTrade, staffRead, aiMargin, tradeLegal, executeTradeBetween } from './trade';
 export type { TradeOffer, PickRef, TradeReply } from './trade';
@@ -57,23 +60,30 @@ export function playerAccepts(w: World, p: Player, tid: string, salary: number, 
   return { ok, text: `${agent} for ${p.name}: "We'll pass for now."` };
 }
 
-export function signPlayer(w: World, pid: string, tid: string, salary: number, years: number) {
+/** Sign a player. Every signing goes through the era's cap rules; returns the check (nothing happens when it fails). */
+export function signPlayer(w: World, pid: string, tid: string, salary: number, years: number): SignCheck {
   const p = w.players[pid];
+  const check = signingCheck(w, tid, p, salary, years);
+  if (!check.ok) return check;
+  noteSigning(w, tid, check.via);
   if (p.team) { const old = w.teams[p.team]; old.roster = old.roster.filter(x => x !== pid); }
   w.freeAgents = w.freeAgents.filter(x => x !== pid);
-  p.team = tid; w.teams[tid].roster.push(pid);
+  p.team = tid; w.teams[tid].roster.push(pid); delete (p as any).bird;
   p.contract = { salary, years, known: null, provenance: 'Signed in this save (simulated)', signed: w.season.day };
   p.rosterStatus = 'Signed';
   addEvent(w, 'signing', `${tid} signed ${p.name} (${fmt$(salary)} × ${years})`, [pid]);
   if (tid === w.meta.userTeam) checkCoachRequest(w);
   if (playerValue(p) > 58) addNews(w, `${w.teams[tid].name} sign ${p.name}`, `${years}-year deal, terms ${fmt$(salary)}/yr (simulated).`, 'transactions');
+  return check;
 }
 
 export function releasePlayer(w: World, pid: string) {
   const p = w.players[pid];
   const t = w.teams[p.team!];
+  addDeadMoney(w, t.id, p); // guaranteed money stays on the books
+  if ((p.contract?.years ?? 0) <= 0) delete (p as any).bird; // letting an unsigned free agent go renounces his rights
   t.roster = t.roster.filter(x => x !== pid);
-  p.team = null; p.ask = Math.round(marketSalary(p) * 0.8 / 5000) * 5000; p.contract = null; p.rosterStatus = `Waived by ${t.abbr}`;
+  p.team = null; p.ask = Math.max(minSalary(capSeason(w), yos(p)), Math.round(marketSalary(p, capSeason(w)) * 0.8 / 5000) * 5000); p.contract = null; p.rosterStatus = `Waived by ${t.abbr}`;
   w.freeAgents.push(pid);
   addEvent(w, 'release', `${t.abbr} waived ${p.name}`, [pid]);
 }
@@ -124,29 +134,55 @@ export function scoutReport(w: World, pid: string) {
   const rng = stream(w.meta.seed, 'scouting', w.season.day, pid);
   for (const k of ['now', 'pot'] as const) {
     const s = p.scout[k];
-    const truth = k === 'now' ? p.ovr : potentialOvr(p);
-    const biasKept = s.mid - truth > 0 ? Math.min(3, (s.mid - truth) * 0.4) : Math.max(-3, (s.mid - truth) * 0.4);
+    // more looks shrink our own error; the consensus misread (hype) only partly washes out, as it did for real scouts
+    const consensus = hypeOf(p) * (k === 'now' ? 0.35 : 0.65);
+    const truth = (k === 'now' ? p.ovr : potentialOvr(p)) + consensus;
+    const biasKept = s.mid - truth > 0 ? Math.min(2, (s.mid - truth) * 0.3) : Math.max(-2, (s.mid - truth) * 0.3);
     const target = truth + biasKept;
     const half = (s.hi - s.lo) / 2;
-    s.mid = Math.round(s.mid + (target - s.mid) * 0.4 + rng.normal(0, 1.5));
-    const nh = Math.max(k === 'now' ? 3 : 5, half * 0.75);
-    s.lo = Math.round(s.mid - nh); s.hi = Math.round(s.mid + nh); s.reports++;
+    s.mid = Math.round(s.mid + (target - s.mid) * 0.45 + rng.normal(0, 0.8));
+    const nh = Math.max(k === 'now' ? 2 : 3, half * 0.7);
+    s.mid = Math.min(99, s.mid); s.lo = Math.round(s.mid - nh); s.hi = Math.min(99, Math.round(s.mid + nh)); s.reports++;
   }
 }
 
 // ------------------------------------------------------------------ daily AI + message generation
 const dayNum = (d: string) => Math.floor(new Date(d + 'T12:00:00Z').getTime() / 86400000);
 
+/** League floor: a team below eight players (or six healthy) signs minimum-salary free agents until it can play. */
+export function enforceRosterFloor(w: World) {
+  const season = capSeason(w);
+  for (const t of Object.values(w.teams)) {
+    const healthy = () => t.roster.filter(id => !(w.players[id]?.injury && w.players[id].injury!.daysLeft > 0)).length;
+    let guard = 0;
+    while ((t.roster.length < 8 || (healthy() < 6 && t.roster.length < 13)) && guard++ < 6) {
+      const p = w.freeAgents.map(id => w.players[id]).filter(x => x && !x.retired && rightsOk(x, t.id) && !(x.injury && x.injury.daysLeft > 0)).sort((a, b) => playerValue(b) - playerValue(a))[0];
+      if (!p) break;
+      const res = signPlayer(w, p.id, t.id, minSalary(season, yos(p)), 1);
+      if (!res.ok) break;
+      if (t.id === w.meta.userTeam) addMessage(w, { date: w.season.day, from: 'League office', role: 'League', subject: `Emergency signing: ${p.name}`, body: `League rules require a playable roster. With too few healthy players, ${p.name} was signed to a one-year minimum contract. You can release him once the roster recovers.`, urgent: 1, tag: 'League' });
+    }
+  }
+}
+
 export function aiDailyMoves(w: World) {
   const rng = stream(w.meta.seed, 'ai', w.season.day);
+  if (['preseason', 'regular', 'playoffs'].includes(w.season.phase)) enforceRosterFloor(w);
   for (const t of Object.values(w.teams)) {
     if (t.id === w.meta.userTeam) continue;
     const healthy = t.roster.filter(id => !(w.players[id].injury && w.players[id].injury!.daysLeft > 3)).length;
     if (t.roster.length < 10 || (healthy < 9 && t.roster.length < 12)) {
-      const best = w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && rightsOk(p, t.id)).sort((a, b) => playerValue(b) - playerValue(a))[0];
-      if (best) signPlayer(w, best.id, t.id, Math.max($y(30000), Math.round((best.ask ?? marketSalary(best)) * 0.9 / 5000) * 5000), 1);
+      // injury cover: the best free agent who will take what the cap allows
+      const pool = w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && rightsOk(p, t.id)).sort((a, b) => playerValue(b) - playerValue(a));
+      for (const best of pool.slice(0, 8)) {
+        const want = Math.round((best.ask ?? marketSalary(best, capSeason(w))) * 0.9 / 5000) * 5000;
+        const offer = Math.min(want, bestOffer(w, t.id, best, 1));
+        if (offer >= want * 0.6 && signPlayer(w, best.id, t.id, Math.max(minSalary(capSeason(w), yos(best)), offer), 1).ok) break;
+      }
     }
   }
+  // unsigned free agents come down in price as the season goes on
+  if (dayNum(w.season.day) % 14 === 0) for (const id of w.freeAgents) { const p = w.players[id]; if (p?.ask) p.ask = Math.max(minSalary(capSeason(w), yos(p)), Math.round(p.ask * 0.88 / 5000) * 5000); }
   // AI trade proposal to the user, roughly every 3 weeks, before the deadline
   if (w.season.phase === 'regular' && w.season.day <= TRADE_DEADLINE(w.season.year)) {
     if (rng.chance(0.07)) aiProposeTrade(w);
@@ -188,7 +224,7 @@ export function generateDailyMessages(w: World) {
   if (d === 60) {
     const exp = team.roster.map(id => w.players[id]).filter(p => p.contract && p.contract.years <= 1 && playerValue(p) > 55).sort((a, b) => playerValue(b) - playerValue(a))[0];
     if (exp) {
-      exp.ask = marketSalary(exp);
+      exp.ask = marketSalary(exp, w.season.year + 1);
       addMessage(w, { date: S.day, from: `Agent for ${exp.name}`, role: 'Agent', subject: `${exp.name}'s agent wants to talk extension`, body: `${exp.name}'s deal is up after this season. His camp is looking for about ${fmt$(exp.ask)} a year. Salary figures before this save are reconstructed estimates.`,
         urgent: 2, tag: 'Agent', actions: [{ label: 'Offer extension', cmd: 'extend', arg: { pid: exp.id } }, { label: 'Not yet', cmd: 'dismiss' }] });
     }
@@ -243,34 +279,61 @@ export function ownerSeasonReview(w: World) {
 export function resolveExpiring(w: World) {
   const user = w.meta.userTeam;
   const rng = stream(w.meta.seed, 'offseason', w.season.year);
+  const season = capSeason(w);
+  rollDeadMoney(w);
   for (const t of Object.values(w.teams)) {
     for (const id of [...t.roster]) {
       const p = w.players[id];
       if (!p.contract) continue;
+      if ((p.contract as any).fresh) { delete (p.contract as any).fresh; continue; } // a contract signed this summer starts next season
       p.contract.years--;
       if (p.contract.years > 0) continue;
-      p.ask = marketSalary(p);
+      (p as any).bird = t.id;
+      p.ask = marketSalary(p, season);
       if (t.id === user) {
-        addMessage(w, { date: w.season.day, from: `Agent for ${p.name}`, role: 'Agent', subject: `${p.name} is a free agent unless re-signed`, body: `His camp wants about ${fmt$(p.ask)} a year. If we don't re-sign him before the season, he'll test the market.`,
+        addMessage(w, { date: w.season.day, from: `Agent for ${p.name}`, role: 'Agent', subject: `${p.name} is a free agent unless re-signed`, body: `His camp wants about ${fmt$(p.ask)} a year. ${capRules(season).hasCap ? 'You hold his Bird rights, so you can go over the cap to keep him, and his cap hold counts against your room until you sign or renounce him.' : ''} If we don't re-sign him before the season, he'll test the market.`,
           urgent: 2, tag: 'Agent', actions: [{ label: 'Offer contract', cmd: 'extend', arg: { pid: id } }, { label: 'Let him go', cmd: 'letGo', arg: { pid: id } }] });
         continue;
       }
-      const keep = playerValue(p) > 52 && (p.age ?? 30) < 33 && rng.chance(0.7);
-      if (keep) p.contract = { salary: p.ask, years: rng.int(1, 3), known: null, provenance: 'Re-signed in this save (simulated)', signed: w.season.day };
-      else { t.roster = t.roster.filter(x => x !== id); p.team = null; p.contract = null; w.freeAgents.push(id); p.rosterStatus = `Free agent (was ${t.abbr})`; }
     }
   }
-  addMessage(w, { date: w.season.day, from: 'League office', role: 'League', subject: 'Free agency is open', body: 'Re-sign your players, sign free agents and draft picks, then start the new season from the Front Office.', urgent: 1, tag: 'League', actions: [{ label: 'Open Front Office', cmd: 'goto', arg: 'office' }] });
+  // AI re-signings with Bird rights, best players first, within each club's spending line
+  for (const t of Object.values(w.teams)) {
+    if (t.id === user) continue;
+    const exp = t.roster.map(id => w.players[id]).filter(p => p.contract && p.contract.years <= 0).sort((a, b) => playerValue(b) - playerValue(a));
+    for (const p of exp) {
+      const line = aiSpendLine(w, t);
+      const sal = Math.min(p.ask ?? marketSalary(p, season), maxSalary(season, yos(p), p.contract!.salary) ?? Infinity);
+      const v = playerValue(p);
+      const worth = v > 52 && (p.age ?? 30) < 34 && rng.chance(v > 72 ? 0.92 : 0.65);
+      const fits = teamPayroll(w, t.id) + sal <= line || (v >= 80 && teamPayroll(w, t.id) + sal <= line * 1.12);
+      const yrs = clamp(v > 75 && (p.age ?? 30) < 30 ? rng.int(3, 5) : rng.int(1, 3), 1, capRules(season).maxYearsOwn);
+      if (worth && fits) { p.contract = { salary: sal, years: yrs, known: null, provenance: 'Re-signed in this save (simulated)', signed: w.season.day }; delete (p as any).bird; }
+      else { t.roster = t.roster.filter(x => x !== p.id); p.team = null; p.contract = null; w.freeAgents.push(p.id); p.rosterStatus = `Free agent (was ${t.abbr})`; }
+    }
+  }
+  addMessage(w, { date: w.season.day, from: 'League office', role: 'League', subject: 'Free agency is open', body: `Re-sign your players, sign free agents and draft picks, then start the new season from the Front Office. ${capRules(season).label} for ${season}–${String(season + 1).slice(2)}; see Finances for your cap sheet.`, urgent: 1, tag: 'League', actions: [{ label: 'Open Finances', cmd: 'goto', arg: 'finances' }] });
 }
 
 export function aiFreeAgency(w: World) {
   const rng = stream(w.meta.seed, 'fa', w.season.year);
+  const season = capSeason(w);
   const order = Object.values(w.teams).filter(t => t.id !== w.meta.userTeam).sort(() => rng.next() - 0.5);
-  for (let pass = 0; pass < 4; pass++) for (const t of order) {
+  for (let pass = 0; pass < 5; pass++) for (const t of order) {
     if (t.roster.length >= 12) continue;
-    const pool = w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && rightsOk(p, t.id)).sort((a, b) => playerValue(b) - playerValue(a));
-    const p = pool[Math.floor(rng.next() * Math.min(3, pool.length))];
-    if (p && (t.roster.length < 11 || playerValue(p) > 50)) signPlayer(w, p.id, t.id, Math.max($y(30000), p.ask ?? marketSalary(p)), rng.int(1, 3));
+    const line = aiSpendLine(w, t);
+    const pool = w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && rightsOk(p, t.id)).sort((a, b) => playerValue(b) - playerValue(a)).slice(0, 14);
+    for (const p of pool) {
+      const ask = p.ask ?? marketSalary(p, season);
+      const years = rng.int(1, playerValue(p) > 70 && (p.age ?? 30) < 30 ? 4 : 2);
+      let offer = Math.min(ask, bestOffer(w, t.id, p, years));
+      const mn = minSalary(season, yos(p));
+      // a player takes a little less to get a deal done, not a lot less; minimum guys sign for the minimum
+      if (offer < ask * 0.85 && offer > mn) continue;
+      if (offer <= mn) { if (t.roster.length >= 11 && playerValue(p) < 50) continue; offer = mn; }
+      if (teamPayroll(w, t.id) + offer > line && offer > mn) continue;
+      if (signPlayer(w, p.id, t.id, offer, offer <= mn ? Math.min(2, years) : years).ok) break;
+    }
   }
   // trim to 12
   for (const t of order) while (t.roster.length > 12) {

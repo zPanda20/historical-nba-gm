@@ -1,6 +1,7 @@
 // Possession-by-possession basketball engine (GDD §7). Discrete-event, zone/action model.
 // The SAME function resolves watched and fast-simmed games; `log` only controls text output.
 import type { BoxLine, BoxScore, Coach, GameEvent, Player, Team, World } from './types';
+import { injuryRisk } from './impact';
 import { Rng, clamp, logit, sigmoid, stream, z } from './rng';
 import { Gameplan, makeGameplan, playerValue, POSITIONS, PosKey, posScore } from './coach';
 import { eraRules, eraStyle } from './history';
@@ -95,7 +96,9 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
     const team = world.teams[tid];
     const coach = world.coaches[team.coach];
     const plan = makeGameplan(world, team, coach);
-    const avail = team.roster.map(id => world.players[id]).filter(p => p && !(p.injury && p.injury.daysLeft > 0));
+    let avail = team.roster.map(id => world.players[id]).filter(p => p && !(p.injury && p.injury.daysLeft > 0));
+    // a decimated team still has to field five: the least-hurt players suit up
+    if (avail.length < 5) avail = team.roster.map(id => world.players[id]).filter(Boolean).sort((a, b) => (a.injury?.daysLeft ?? 0) - (b.injury?.daysLeft ?? 0)).slice(0, Math.max(5, avail.length));
     const ps: PState[] = avail.map((p, i) => ({ p, slot: i, sec: 0, mis: 0, best: Math.max(...POSITIONS.map(q => posScore(p, q))), F: 0.04 + (100 - (p.cond ?? 100)) / 100 * 0.55 + (p.fatigueSeason ?? 0) * 0.08, fouls: 0, out: false, injured: false,
       line: { pid: p.id, name: p.name, min: 0, pts: 0, fgm: 0, fga: 0, tpm: 0, tpa: 0, ftm: 0, fta: 0, oreb: 0, dreb: 0, ast: 0, stl: 0, blk: 0, tov: 0, pf: 0, pm: 0, gs: false } }));
     const on = plan.starters.map(id => ps.find(x => x.p.id === id)!).filter(Boolean);
@@ -170,7 +173,7 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
           x.sec += t;
           x.F = clamp(x.F + (t / 60) * CAL.fatOn * (1.35 - x.p.r.stamina / 100) / S[s].plan.pace, 0, 1);
           // injury hazard (exposure = minutes on floor)
-          if (!x.injured && irng.chance(CAL.injuryPerMin * (t / 60) * (1 + Math.max(0, (x.p.age ?? 27) - 30) * 0.06) * (1 + x.F))) {
+          if (!x.injured && irng.chance(CAL.injuryPerMin * injuryRisk(x.p) * (t / 60) * (1 + Math.max(0, (x.p.age ?? 27) - 30) * 0.06) * (1 + x.F))) {
             x.injured = true;
             const roll = irng.next();
             const sev = roll < 0.62 ? 'minor' : roll < 0.9 ? 'moderate' : 'serious';
@@ -229,6 +232,8 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
       for (const w of want) if (next.length < 5 && !next.includes(w)) next.push(w);
       while (next.length > 5) next.pop();
       for (const x of cand) if (next.length < 5 && !next.includes(x)) next.push(x);
+      // no one left on the bench: a fouled-out player stays in (the rule), then the walking wounded
+      for (const x of [...side.ps].sort((a, b) => Number(a.injured) - Number(b.injured))) if (next.length < 5 && !next.includes(x)) next.push(x);
       const changed = next.filter(x => !side.on.includes(x));
       if (changed.length && opts.log) emit('sub', s, `${side.team.name} sub: ${changed.map(x => last(x.p)).join(', ')} in.`);
       const kept = next.filter(x => side.on.includes(x));

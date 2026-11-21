@@ -1,6 +1,7 @@
 // Trades (F13/F22): every front office values players through its OWN eyes (noisy beliefs), its clock,
 // its positional needs, roster spots and contracts. No one is omniscient, and nobody accepts just anything.
 import type { Player, World } from './types';
+import { tradeSalaryCheck, aiSpendLine, teamPayroll as capPayroll } from './cap';
 import { $y } from './history';
 import { clamp, sigmoid, stream } from './rng';
 import { playerValue } from './coach';
@@ -50,7 +51,8 @@ const SLOTS: Record<string, number> = { G: 3.5, W: 2, B: 3.5 };
 export function believedOvr(w: World, p: Player, viewer: string): number {
   if (p.team === viewer) return playerValue(p);
   if (viewer === w.meta.userTeam) return playerValue(p) + unitErr(w, p.id) * sdFor(w, p);
-  const sd = p.sampleMin > 1500 ? 2.8 : p.sampleMin > 400 ? 4 : 6;
+  const mins = (p.sampleMin ?? 0) + (p.stats ?? []).reduce((s, x) => s + (x.min ?? 0), 0);
+  const sd = mins > 4000 ? 1.4 : mins > 1500 ? 1.9 : mins > 400 ? 2.6 : 3.6;
   return playerValue(p) + stream(w.meta.seed, 'belief', viewer, p.id).normal(0, sd);
 }
 
@@ -155,7 +157,12 @@ export function tradeLegal(w: World, offer: TradeOffer): string | null {
   if (uAfter < 8 || oAfter < 8) return 'That would leave a team with too few players.';
   if (!offer.give.length && !offer.givePicks.length) return 'You need to offer something.';
   if (!offer.get.length && !offer.getPicks.length) return 'Ask for something in return.';
-  return null;
+  return salaryMatch(w, U.id, O.id, offer.give, offer.get);
+}
+const sal = (w: World, ids: string[]) => ids.reduce((s, id) => s + (w.players[id]?.contract?.salary ?? 0), 0);
+/** Cap-era salary matching for both sides of a deal (A sends aGives, B sends bGives). */
+export function salaryMatch(w: World, aId: string, bId: string, aGives: string[], bGives: string[]): string | null {
+  return tradeSalaryCheck(w, aId, sal(w, aGives), sal(w, bGives)) ?? tradeSalaryCheck(w, bId, sal(w, bGives), sal(w, aGives));
 }
 
 /** The other GM's true margin (their beliefs, needs, budget, appetite for change). */
@@ -163,7 +170,7 @@ export function aiMargin(w: World, offer: TradeOffer) {
   const O = w.teams[offer.other];
   const { getV, giveV } = sideValue(w, O.id, offer.get, offer.give, offer.getPicks, offer.givePicks);
   const dPay = offer.give.reduce((s, id) => s + (w.players[id].contract?.salary ?? 0), 0) - offer.get.reduce((s, id) => s + (w.players[id].contract?.salary ?? 0), 0);
-  const payPen = Math.max(0, payroll(w, O.id) + dPay - (O.payrollBudget ?? 1e9)) / $y(40000);
+  const payPen = Math.max(0, capPayroll(w, O.id) + dPay - aiSpendLine(w, O)) / $y(40000);
   const friction = (2 + giveV * 0.06) * gmProfile(w, O.id).tough;
   return { margin: getV - giveV - payPen - friction, getV, giveV, payPen };
 }
@@ -320,6 +327,9 @@ export function aiAiTrades(w: World) {
   for (const x of pa) for (const y of pb) {
     const a = sideValue(w, A.id, [x.id], [y.id], [], []), b = sideValue(w, B.id, [y.id], [x.id], [], []);
     const fa = 2 + a.giveV * 0.06, fb = 2 + b.giveV * 0.06;
+    if (salaryMatch(w, A.id, B.id, [x.id], [y.id])) continue;
+    const dA = (y.contract?.salary ?? 0) - (x.contract?.salary ?? 0);
+    if (dA > 0 && capPayroll(w, A.id) + dA > aiSpendLine(w, A) || -dA > 0 && capPayroll(w, B.id) - dA > aiSpendLine(w, B)) continue;
     if (a.getV - a.giveV > fa && b.getV - b.giveV > fb) { executeTradeBetween(w, A.id, B.id, [x.id], [y.id], [], []); return; }
   }
 }

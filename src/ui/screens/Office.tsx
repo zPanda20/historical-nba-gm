@@ -1,4 +1,6 @@
 import { useState } from 'preact/hooks';
+import { bestOffer, capRules, capSeason, capRoom, fmtM } from '../../sim/cap';
+import { go } from '../store';
 import { useStore, openModal, commit, toast, ui, setUI } from '../store';
 import { place, Panel, Btn, Tabs, curTab, Logo, OvrBadge, Chip, Meter, dateShort, injuryChip, PlayerTile, SortTable, seenOvr } from '../util';
 import { rightsOk, evaluateTrade, executeTrade, fmt$, payroll, marketSalary, tradeLegal } from '../../sim/gm';
@@ -91,15 +93,16 @@ function FreeAgents({ w }: { w: World }) {
   const reqDef = req ? needDef(req.key) : null;
   return <div class="fa-wrap">
     {req && <Panel title="What the coach asked for" class="fa-req"><ReqPanel w={w} /><div class="muted small">Open a player to see how signing him would move this.</div></Panel>}
-    <Panel class="fill" title={`Free agents (${pool.length})`} right={<span class="muted">Roster {t.roster.length}/12 · payroll {fmt$(payroll(w, u))} of {fmt$(w.owner.budget)}</span>}>
+    <Panel class="fill" title={`Free agents (${pool.length})`} right={<span class="muted">Roster {t.roster.length}/12 · payroll {fmt$(payroll(w, u))} · {capRules(capSeason(w)).hasCap ? `cap room ${fmtM(capRoom(w, u))}` : `owner budget ${fmt$(w.owner.budget)}`}</span>}>
       <SortTable id="fa" rows={pool} onRow={p => openModal('offer', { pid: p.id })} cols={[
         { key: 'name', label: 'Player', cls: 'l', get: p => p.name, desc: false, render: p => <PlayerTile p={p} size={34} /> },
         { key: 'pos', label: 'Pos', get: p => p.pos, desc: false, render: p => p.pos },
         { key: 'age', label: 'Age', get: p => p.age ?? 0, desc: false, render: p => p.age },
         { key: 'est', label: 'Est.', get: p => seenOvr(w, p).mid, render: p => <OvrBadge w={w} p={p} /> },
         ...(reqDef ? [{ key: 'need', label: reqDef.label, get: (p: Player) => Math.round(reqDef.f(Object.fromEntries(Object.keys(p.r).map(k => [k, seenRating(w, p, k as any)])) as any)), render: (p: Player) => Math.round(reqDef.f(Object.fromEntries(Object.keys(p.r).map(k => [k, seenRating(w, p, k as any)])) as any)), title: 'Our staff\'s estimate of what the coach asked for' }] : []),
-        { key: 'ask', label: 'Asking', get: p => p.ask ?? marketSalary(p), render: p => fmt$(p.ask ?? marketSalary(p)) },
-        { key: 'st', label: 'Status', cls: 'l', render: p => p.draftedBy === u ? <Chip kind="good">Our draft rights</Chip> : <span class="muted small">{p.rosterStatus}</span> },
+        { key: 'ask', label: 'Asking', get: p => p.ask ?? marketSalary(p, capSeason(w)), render: p => fmt$(p.ask ?? marketSalary(p, capSeason(w))) },
+        { key: 'most', label: 'We can offer', title: 'The most the cap rules (or the owner) let us pay him', get: p => bestOffer(w, u, p, 2), render: p => { const m = bestOffer(w, u, p, 2), a = p.ask ?? marketSalary(p, capSeason(w)); return <span class={m >= a ? 'good' : m >= a * 0.85 ? '' : 'bad'}>{fmt$(m)}</span>; } },
+        { key: 'st', label: 'Status', cls: 'l', render: p => p.draftedBy === u && (p.rosterStatus ?? '').startsWith('Draft rights') ? <Chip kind="good">Our draft rights</Chip> : (p as any).bird === u ? <><Chip kind="good">Our Bird rights</Chip> <span class="muted small">{p.rosterStatus}</span></> : <span class="muted small">{p.rosterStatus}</span> },
         { key: 'act', label: '', render: p => <Btn kind="sm" onClick={() => openModal('offer', { pid: p.id })}>Offer</Btn> },
       ]} />
     </Panel>
@@ -113,7 +116,7 @@ function Contracts({ w }: { w: World }) {
   const off = w.season.phase === 'freeagency';
   const exp = (p: Player) => (p.contract?.years ?? 0) <= (off ? 0 : 1);
   return <div class="two wide-l">
-    <Panel class="fill" title="Contracts" right={<span class="muted">Payroll {fmt$(pay)} · owner budget {fmt$(w.owner.budget)}</span>}>
+    <Panel class="fill" title="Contracts" right={<span class="muted">Payroll {fmt$(pay)} · {capRules(capSeason(w)).hasCap ? `cap ${fmtM(capRules(capSeason(w)).cap)}` : `owner budget ${fmt$(w.owner.budget)}`} · <button data-nav class="linkish" onClick={() => go('finances')}>Full cap sheet</button></span>}>
       <div class="pay-meter"><Meter v={pay} max={Math.max(pay, w.owner.budget) * 1.1} /><span class={pay > w.owner.budget ? 'bad' : ''}>{pay > w.owner.budget ? `${fmt$(pay - w.owner.budget)} over budget` : `${fmt$(w.owner.budget - pay)} under budget`}</span></div>
       <SortTable id="contracts" rows={ps} def="sal:d" rowCls={p => exp(p) ? 'hl' : ''} onRow={p => openModal('player', { id: p.id })} cols={[
         { key: 'name', label: 'Player', cls: 'l', get: p => p.name, desc: false, render: p => <PlayerTile p={p} size={34} /> },
@@ -126,7 +129,8 @@ function Contracts({ w }: { w: World }) {
       ]} />
     </Panel>
     <Panel title="How money works here">
-      <p class="muted">Salaries for 1976 are <b>reconstructed estimates</b> for simulation, marked R. Anything signed in this save is simulated. There is no salary cap in 1976–77; your limit is the owner's budget and his patience.</p>
+      <p class="muted">Salaries for 1976 are <b>reconstructed estimates</b> for simulation, marked R. Anything signed in this save is simulated.</p>
+      <p class="muted">{capRules(capSeason(w)).hasCap ? <>This season runs under a <b>{capRules(capSeason(w)).label.toLowerCase()}</b>. Free agents from other teams need cap room or an exception; your own players can be kept over the cap with Bird rights. The Finances screen (9) shows every season on the books.</> : <>There is no salary cap until 1984–85: the owner's budget is the hard limit on new money (minimum deals excepted).</>}</p>
       <p class="muted">Contracts tick down at the end of each season. In the offseason, unsigned players leave when the new season starts.</p>
     </Panel>
   </div>;

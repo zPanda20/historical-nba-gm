@@ -214,6 +214,8 @@ for yr in range(1977, 2027):
     for d in draft_rows:
         if d["year"] != yr or not d["player_name_raw"].strip(): continue
         nm = d["player_name_raw"].strip()
+        try: nm = nm.encode("latin-1").decode("utf-8")  # the draft sheets were read as latin-1: Jokić, Dončić, Miličić...
+        except (UnicodeEncodeError, UnicodeDecodeError): pass
         pid = find_pid(nm, yr)
         if pid and pid in used: continue
         if pid and pid in first_season and first_season[pid] < yr - 1: continue  # already a pro before this draft

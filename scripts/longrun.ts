@@ -6,6 +6,8 @@ import { aiFreeAgency, releasePlayer } from '../src/sim/gm';
 import { setClassData } from '../src/sim/seasons';
 import { playerValue } from '../src/sim/coach';
 import { offseasonRoster } from '../src/sim/delegate';
+import { IMPACT } from '../src/sim/impact';
+const peak: Record<string, [number, number, string]> = {};
 
 const data = JSON.parse(fs.readFileSync('public/data/world1976.json', 'utf8'));
 setClassData(JSON.parse(fs.readFileSync('public/data/classes.json', 'utf8')));
@@ -29,7 +31,8 @@ while (w.season.year <= until) {
   const st = standings(w);
   const active = Object.values(w.players).filter(p => p.team);
   const avgOvr = active.reduce((a, p) => a + playerValue(p), 0) / active.length;
-  const top = [...active].sort((a, b) => playerValue(b) - playerValue(a)).slice(0, 3).map(p => `${p.name.split(' ').slice(-1)[0]}(${Math.round(playerValue(p))},${p.age})`).join(' ');
+  for (const p of active) { const v = Math.round(playerValue(p)); if (!peak[p.id] || v > peak[p.id][0]) peak[p.id] = [v, p.age ?? 0, p.name]; }
+  const top = [...active].sort((a, b) => playerValue(b) - playerValue(a)).slice(0, +(process.env.TOPN ?? 3)).map(p => `${p.name.split(' ').slice(-1)[0]}(${Math.round(playerValue(p))},${p.age})`).join(' ');
   const aw = w.season.awards ?? {};
   const rosterSizes = Object.values(w.teams).map(t => t.roster.length);
   rows.push({ y, teams: Object.keys(w.teams).length, gp: `${Math.min(...per)}-${Math.max(...per)}`, ppg: +(T.pts / tg).toFixed(1), pace: +(T.poss / games.length).toFixed(1), fg: +(T.fgm / T.fga).toFixed(3),
@@ -55,3 +58,8 @@ console.log('total', ((Date.now() - t0) / 1000).toFixed(0), 's; save size', (siz
 console.log('teams', Object.values(w.teams).map(t => `${t.id}=${t.abbr}/${t.conf[0]}/${t.div}`).join(' '));
 fs.writeFileSync('/tmp/longrun.json', JSON.stringify(rows));
 fs.writeFileSync('/tmp/world_end.json', JSON.stringify(w));
+// impact players: best overall reached vs everyone else
+const imp = Object.values(w.players).filter(p => p.nbaId && IMPACT[p.nbaId] && peak[p.id]).map(p => peak[p.id]).sort((a, b) => b[0] - a[0]);
+const rest = Object.entries(peak).filter(([id]) => { const p = w.players[id]; return !(p?.nbaId && IMPACT[p.nbaId]); }).map(([, v]) => v).sort((a, b) => b[0] - a[0]);
+console.log('IMPACT peaks', imp.length, imp.map(x => `${x[2]}:${x[0]}@${x[1]}`).join(', '));
+console.log('REST top 25', rest.slice(0, 25).map(x => `${x[2]}:${x[0]}@${x[1]}`).join(', '));

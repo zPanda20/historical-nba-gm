@@ -1,5 +1,6 @@
 // Shared UI pieces and formatting helpers.
 import type { ComponentChildren } from 'preact';
+import { DARK_LOGOS } from '../sim/logoMeta';
 import type { Player, Team, World } from '../sim/types';
 import { perGame } from '../sim/league';
 import { hashStr } from '../sim/rng';
@@ -41,7 +42,8 @@ export const f1 = (n: number) => (Math.round(n * 10) / 10).toFixed(1);
 export const pct = (n: number) => n ? n.toFixed(3).replace(/^0/, '') : '.000';
 
 export function Logo({ t, size = 48, class: cls = '' }: { t: Team | string; size?: number; class?: string }) {
-  return <img class={`logo ${cls}`} src={logoUrl(t)} style={{ width: size, height: size }} alt="" draggable={false} />;
+  const key = typeof t === 'string' ? t : t.logoKey ?? t.abbr;
+  return <img class={`logo ${DARK_LOGOS.has(key) ? 'halo' : ''} ${cls}`} src={logoUrl(t)} style={{ width: size, height: size }} alt="" draggable={false} />;
 }
 
 /** NBA person ids that have a photo in assets/headshots (filled at boot from index.json). */
@@ -81,9 +83,9 @@ export function Meter({ v, max = 100, label }: { v: number; max?: number; label?
 /** Rating value as the front office sees it: own players exactly (coach sees them daily), others as a scouting range. */
 export function seenOvr(w: World, p: Player): { mid: number; lo: number; hi: number; exact: boolean } {
   if (p.team === w.meta.userTeam) return { mid: p.ovr, lo: p.ovr, hi: p.ovr, exact: true };
-  if (p.scout?.now && !p.team) return { ...p.scout.now, exact: false };
+  if (p.scout?.now && !p.team && !(p.stats ?? []).length) return { ...p.scout.now, exact: false }; // prospects only; a veteran is judged on his NBA tape
   const mid = Math.round(believedOvr(w, p, w.meta.userTeam));
-  const half = Math.max(2, Math.round(sdFor(w, p) * 1.3));
+  const half = Math.max(1, Math.round(sdFor(w, p)));
   return { mid, lo: mid - half, hi: mid + half, exact: false };
 }
 export function OvrBadge({ w, p }: { w: World; p: Player }) {
