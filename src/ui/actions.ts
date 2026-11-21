@@ -1,5 +1,8 @@
 // Game-flow actions the UI can trigger. All simulation goes through the sim modules; the UI never scripts outcomes.
 import type { GameRec, Message, World } from '../sim/types';
+import { migrateContracts } from '../sim/contracts';
+import { exerciseOption, declineOption, resolveSheet, withdrawOffer, faAdvanceDay, faState, pendingDecisions, faActive, finishFreeAgency } from '../sim/market';
+import { rosterRules } from '../sim/rules';
 import { migrateSave } from '../sim/impact';
 import { potentialOvr } from '../sim/world';
 import { createWorld, addMessage, addEvent } from '../sim/world';
@@ -36,6 +39,7 @@ export function enterLoaded(w: World) {
   if (!(w as any).shown) markShownNow(w);
   syncLogos(w);
   migrateSave(w, potentialOvr);
+  migrateContracts(w);
   tidyMessages(w);
   Object.assign(projectedWinsCache, projectedWins(w));
   setWorld(w);
@@ -181,9 +185,10 @@ export function autoDraftRest() {
 export function seasonStartProblems(w: World): string[] {
   const t = w.teams[w.meta.userTeam];
   const out: string[] = [];
-  const active = t.roster.filter(id => (w.players[id].contract?.years ?? 0) > 0);
-  if (active.length > 12) out.push(`Roster has ${active.length} players under contract — cut to 12.`);
-  if (active.length < 8) out.push(`Only ${active.length} players under contract — sign at least ${8 - active.length} more.`);
+  const R = rosterRules(w.season.year + 1);
+  const active = t.roster.filter(id => (w.players[id].contract?.years ?? 0) > 0 && !w.players[id].contract?.twoWay);
+  if (active.length > R.max) out.push(`Roster has ${active.length} players under contract: cut to ${R.max}.`);
+  if (active.length < R.min) out.push(`Only ${active.length} players under contract: sign at least ${R.min - active.length} more (${R.label}).`);
   return out;
 }
 export function beginNextSeasonSync(w: World) {
@@ -226,9 +231,15 @@ export function runCommand(m: Message, a: { label: string; cmd: string; arg?: an
     case 'extend': { m.read = true; openModal('offer', { pid: a.arg.pid, msgId: m.id }); commit(); return; }
     case 'letGo': {
       const p = w.players[a.arg.pid];
-      if (p.team === w.meta.userTeam) { releasePlayer(w, p.id); p.rosterStatus = `Free agent (was ${w.teams[w.meta.userTeam].abbr})`; }
-      resolve(); toast(`${p.name} will test free agency.`); break;
+      if (p.team === w.meta.userTeam && (p.contract?.years ?? 0) <= 0) { releasePlayer(w, p.id); p.rosterStatus = `Free agent (was ${w.teams[w.meta.userTeam].abbr})`; }
+      else if ((p as any).bird === w.meta.userTeam) { (p as any).renounced = w.meta.userTeam; delete (p as any).bird; delete (p as any).rfa; withdrawOffer(w, w.meta.userTeam, p.id); }
+      resolve(); toast(`${p.name} renounced: his cap hold is off our books.`); break;
     }
+    case 'withdrawQO': { const p = w.players[a.arg.pid]; delete (p as any).rfa; p.rosterStatus = `Free agent (was ${w.teams[w.meta.userTeam].abbr})`; m.actions = m.actions?.filter(x => x.cmd !== 'withdrawQO'); toast(`${p.name} is now an unrestricted free agent.`); commit(); return; }
+    case 'exerciseOption': { exerciseOption(w, a.arg.pid); resolve(); toast(`Option exercised: ${w.players[a.arg.pid].name} stays.`); break; }
+    case 'declineOption': { declineOption(w, a.arg.pid); resolve(); toast(`Option declined: ${w.players[a.arg.pid].name} is a free agent.`); break; }
+    case 'matchSheet': { resolveSheet(w, a.arg.pid, true); resolve(); toast(`We matched the offer sheet for ${w.players[a.arg.pid].name}.`); break; }
+    case 'declineSheet': { resolveSheet(w, a.arg.pid, false); resolve(); toast(`${w.players[a.arg.pid].name} leaves on his offer sheet.`); break; }
     case 'jobs': { m.read = true; openModal('jobs'); commit(); return; }
     case 'tradeFinder': { m.read = true; setUI({ tradeDraft: { givePicks: [], getPicks: [], ...a.arg } }); go('office', 'trade'); commit(); return; }
     case 'acceptAiTrade': {
@@ -287,9 +298,32 @@ export function nextStop(w: World): { label: string; verb: string; run?: () => v
     return alive ? { label: 'Playoffs · next day', verb: 'Advance', run: () => sim('day') } : { label: 'Rest of the playoffs', verb: 'Advance', run: () => sim('playoffs') };
   }
   if (S.phase === 'draft') return delegated(w, 'draft') ? { label: 'Scouts make our picks', verb: 'Run draft', run: () => autoDraftRest() } : { label: `${S.year + 1} NBA Draft`, verb: 'Draft room', run: () => go('draft') };
-  if (delegated(w, 'offseason')) return { label: 'Staff handles the offseason', verb: 'Advance', run: () => runBusy('Your staff works the offseason', () => { runDelegates(w); offseasonRoster(w); beginNextSeasonSync(w); return false; }, () => { go('home'); toast(`Welcome to the ${w.season.year}–${String(w.season.year + 1).slice(2)} season.`); }) };
+  if (delegated(w, 'offseason')) return { label: 'Staff handles the offseason', verb: 'Advance', run: () => runBusy('Your staff works the offseason', () => { runDelegates(w); finishFreeAgency(w); offseasonRoster(w); beginNextSeasonSync(w); return false; }, () => { go('home'); toast(`Welcome to the ${w.season.year}–${String(w.season.year + 1).slice(2)} season.`); }) };
+  if (faActive(w)) {
+    const dec = pendingDecisions(w)[0];
+    if (dec) return { label: dec.subject, verb: 'Decide', run: () => { dec.read = true; openModal('message', { id: dec.id }); commit(false); } };
+    const F = faState(w);
+    return { label: `Free agency · day ${F.day + 1} of ${F.len}`, verb: 'Advance', run: () => faDays(1) };
+  }
   const probs = seasonStartProblems(w);
   return probs.length ? { label: probs[0], verb: 'Fix roster', run: () => go('office', 'contracts') } : { label: `Open ${S.year + 1}–${String(S.year + 2).slice(2)}`, verb: 'Advance', run: () => beginNextSeason() };
+}
+
+/** Free agency: move the July market on `n` days (stops early when a decision is waiting for us). */
+export function faDays(n: number) {
+  const w = getWorld();
+  const news: string[] = [];
+  let left = n;
+  runBusy(n > 1 ? 'Free agency' : 'Free agency, next day', () => {
+    if (!faActive(w) || pendingDecisions(w).length) return false;
+    news.push(...faAdvanceDay(w).filter(Boolean));
+    return --left > 0;
+  }, () => {
+    const F = faState(w);
+    if (news.length) addMessage(w, { date: w.season.day, from: 'Front office', role: 'GM', subject: `Free agency, day ${F.day}: ${news[0]}`, body: news.join('\n'), urgent: 1, tag: 'FA' });
+    tidyMessages(w); commit();
+    toast(pendingDecisions(w).length ? 'A decision is waiting for you.' : news[0] ?? (F.done ? 'Free agency is over.' : `Free agency, day ${F.day} of ${F.len}.`));
+  });
 }
 
 /** Playoffs: go to another series' next game (the whole day is played; we sit in that arena). */
@@ -324,7 +358,7 @@ export function autopilot() {
       return true;
     }
     if (ph === 'draft') { if (!delegated(w, 'draft')) return false; runDraftUntilUser(w, true); runDelegates(w); return true; }
-    if (ph === 'freeagency') { if (!delegated(w, 'offseason')) return false; runDelegates(w); offseasonRoster(w); beginNextSeasonSync(w); seasons++; return true; }
+    if (ph === 'freeagency') { if (!delegated(w, 'offseason')) return false; runDelegates(w); finishFreeAgency(w); offseasonRoster(w); beginNextSeasonSync(w); seasons++; return true; }
     return false;
   }, () => { ui.busyPace = 0; ui.busyThin = false; tidyMessages(w); toast(ui.stopRequested ? 'You have the wheel.' : w.meta.fired ? 'Autopilot stopped: you have been fired.' : 'Autopilot paused: something needs you.'); ui.stopRequested = false; void seasons; });
 }

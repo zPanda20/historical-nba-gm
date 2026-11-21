@@ -1,6 +1,7 @@
 // Trades (F13/F22): every front office values players through its OWN eyes (noisy beliefs), its clock,
 // its positional needs, roster spots and contracts. No one is omniscient, and nobody accepts just anything.
 import type { Player, World } from './types';
+import { rules as eraRoster, rosterLimit, isTwoWay } from './rules';
 import { tradeSalaryCheck, aiSpendLine, teamPayroll as capPayroll } from './cap';
 import { $y } from './history';
 import { clamp, sigmoid, stream } from './rng';
@@ -128,9 +129,10 @@ export function sideValue(w: World, tid: string, gives: string[], gets: string[]
   const outV = gives.map(id => assetValue(w, w.players[id], tid));
   let getV = packageSum(inV) + getPicks.reduce((s, p) => s + pickValue(w, p, tid), 0);
   const giveV = packageSum(outV) + givePicks.reduce((s, p) => s + pickValue(w, p, tid), 0);
-  // a body over the 12-man limit means waiving someone they like
-  if (after.length > 12) {
-    const worst = after.map(id => w.players[id]).sort((a, b) => playerValue(a) - playerValue(b)).slice(0, after.length - 12);
+  // a body over the roster limit means waiving someone they like
+  const lim = eraRoster(w).max, std = after.filter(id => !isTwoWay(w.players[id]));
+  if (std.length > lim) {
+    const worst = std.map(id => w.players[id]).sort((a, b) => playerValue(a) - playerValue(b)).slice(0, std.length - lim);
     getV -= worst.reduce((s, p) => s + assetValue(w, p, tid) * 0.7, 0);
   }
   return { getV, giveV };
@@ -151,9 +153,10 @@ export function tradeLegal(w: World, offer: TradeOffer): string | null {
     if (offer.givePicks.some(pk => pk.no && D?.order.find(o => o.pick === pk.no)?.team !== U.id)) return 'That pick is no longer ours.';
     if (offer.getPicks.some(pk => pk.no && D?.order.find(o => o.pick === pk.no)?.team !== O.id)) return `${O.city} no longer own that pick.`;
   }
-  const cap = S.phase === 'draft' || S.phase === 'freeagency' ? 15 : 13;
-  const uAfter = U.roster.length - offer.give.length + offer.get.length, oAfter = O.roster.length - offer.get.length + offer.give.length;
-  if (uAfter > cap || oAfter > cap) return cap === 13 ? 'That would leave a roster over the limit (12 + 1 temporary).' : 'That would leave a roster over the offseason limit of 15.';
+  const cap = rosterLimit(w) + (S.phase === 'regular' || S.phase === 'preseason' ? 1 : 0); // one body over in season until a waiver
+  const std = (ids: string[]) => ids.filter(id => !isTwoWay(w.players[id])).length;
+  const uAfter = std(U.roster) - std(offer.give) + std(offer.get), oAfter = std(O.roster) - std(offer.get) + std(offer.give);
+  if (uAfter > cap || oAfter > cap) return `That would leave a roster over the limit (${eraRoster(w).label}).`;
   if (uAfter < 8 || oAfter < 8) return 'That would leave a team with too few players.';
   if (!offer.give.length && !offer.givePicks.length) return 'You need to offer something.';
   if (!offer.get.length && !offer.getPicks.length) return 'Ask for something in return.';
@@ -243,7 +246,8 @@ export function staffRead(w: World, offer: TradeOffer) {
     const outV = offer.give.map(id => assetValue(w, w.players[id], u));
     let g = packageSum(inV) + offer.getPicks.reduce((s, p) => s + pickValue(w, p, u), 0) * (1 + shift * sd / 25);
     const o = packageSum(outV) + offer.givePicks.reduce((s, p) => s + pickValue(w, p, u), 0);
-    if (after.length > 12) g -= after.map(id => w.players[id]).sort((a, b) => playerValue(a) - playerValue(b)).slice(0, after.length - 12).reduce((s, p) => s + assetValue(w, p, u) * 0.7, 0);
+    const lim = eraRoster(w).max, std = after.filter(id => !isTwoWay(w.players[id]));
+    if (std.length > lim) g -= std.map(id => w.players[id]).sort((a, b) => playerValue(a) - playerValue(b)).slice(0, std.length - lim).reduce((s, p) => s + assetValue(w, p, u) * 0.7, 0);
     return { g, o, net: g - o };
   };
   const mid = calc(0), lo = calc(-1), hi = calc(1);

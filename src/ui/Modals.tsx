@@ -1,5 +1,8 @@
 import { useState } from 'preact/hooks';
-import { signingCheck, capSeason, capRules, capRoom, teamPayroll, maxSalary, minSalary, yos, fmtM, noteSigning } from '../sim/cap';
+import { signingCheck, capSeason, capRules, capRoom, teamPayroll, minSalary, yos, fmtM } from '../sim/cap';
+import { maxFor, maxRaise, birdLevel, twoWaySalary, stretchTerms, canStretch, salaryAt } from '../sim/contracts';
+import { faActive, faState, makeOffer, offersFor, ourOffer, withdrawOffer } from '../sim/market';
+import { rules as eraRules, twoWayEligible } from '../sim/rules';
 import { $y } from '../sim/history';
 import { SeasonCard } from './screens/League';
 import { TeamPage } from './screens/TeamPage';
@@ -45,7 +48,8 @@ function PlayerModal({ w, id }: { w: World; id: string }) {
   const team = p.team ? w.teams[p.team] : null;
   const seasons = [...new Set((p.stats ?? []).map(s => s.season))].sort();
   const est = seenOvr(w, p);
-  const expiring = mine && (p.contract?.years ?? 0) <= (w.season.phase === 'freeagency' ? 0 : 1);
+  // extension window: rookie-scale deals in their last season, veterans with two seasons or fewer (see contracts.ts)
+  const expiring = mine && !!p.contract && !p.contract.twoWay && (p.contract.scale ? p.contract.years <= 1 : p.contract.years <= 2);
   const ask = (kind: 'more' | 'protect' | 'develop') => { const r = requestCoach(w, p.id, kind); setReply(r.text); commit(); };
   return <Shell wide cls="pmodal" title={<>{team && <Logo t={team} size={28} />} {p.name}</>}>
     <div class="pm">
@@ -94,6 +98,7 @@ function PlayerModal({ w, id }: { w: World; id: string }) {
         <div class="traits">{Object.entries(p.traits).map(([k, v]) => <div><span>{k}</span><em>{word(v)}</em></div>)}</div>
         <div class="muted small">{p.traitsNote}</div>
         <div class="pm-act">
+          {!mine && !p.team && !p.retired && w.freeAgents.includes(p.id) && <div class="pm-fa"><Btn kind="sm" onClick={() => openModal('offer', { pid: p.id })}>{(p as any).bird === u ? 'Re-sign him' : 'Make an offer'}</Btn></div>}
           {!mine && !p.retired && <ScoutBox w={w} p={p} />}
           {mine && <>
             <h4>Ask the coach</h4>
@@ -103,7 +108,8 @@ function PlayerModal({ w, id }: { w: World; id: string }) {
             <Btn kind="sm" onClick={() => ask('develop')}>Development focus</Btn>
             {reply && <div class="reply">{reply}</div>}
             <h4>Front office</h4>
-            {expiring && <Btn kind="sm" onClick={() => openModal('offer', { pid: p.id })}>{w.season.phase === 'freeagency' ? 'Re-sign' : 'Offer extension'}</Btn>}
+            {expiring && <Btn kind="sm" onClick={() => openModal('offer', { pid: p.id })}>Offer extension</Btn>}
+            {p.contract?.twoWay && <Btn kind="sm" onClick={() => openModal('offer', { pid: p.id })}>Convert to a standard deal</Btn>}
             <Btn kind="sm ghost" onClick={() => { setUI({ tradeDraft: { other: ui.tradeDraft?.other ?? Object.keys(w.teams).find(x => x !== u)!, give: [p.id], get: [], givePicks: [], getPicks: [] } }); go('office', 'trade'); }}>Shop him in a trade</Btn>
             <Btn kind="sm ghost" onClick={() => openModal('release', { pid: p.id })}>Release</Btn>
           </>}
@@ -138,26 +144,46 @@ function ScoutBox({ w, p }: { w: World; p: Player }) {
 function OfferModal({ w, pid, msgId }: { w: World; pid: string; msgId?: string }) {
   const p = w.players[pid];
   const u = w.meta.userTeam;
-  const cs = capSeason(w), R = capRules(cs);
-  const mxS = maxSalary(cs, yos(p), p.team === u ? p.contract?.salary ?? 0 : 0), mnS = minSalary(cs, yos(p));
-  const askV = Math.min(p.ask ?? marketSalary(p, cs), mxS ?? Infinity);
-  const [sal, setSal] = useState(Math.round(askV / 5000) * 5000);
-  const step = Math.max(5000, Math.round(R.cap * 0.005 / 5000) * 5000);
-  const [yrs, setYrs] = useState(Math.min(3, Math.max(1, (p.age ?? 27) >= 31 ? 2 : 3)));
-  const [res, setRes] = useState<{ ok: boolean; text: string } | null>(null);
+  const cs = capSeason(w), R = capRules(cs), RR = eraRules(w);
   const t = w.teams[u];
-  const own = p.team === u;
-  const inSeason = w.season.phase === 'regular' || w.season.phase === 'playoffs' || w.season.phase === 'preseason';
-  const full = !own && t.roster.length >= (inSeason ? 12 : 15);
+  const extending = p.team === u && !!p.contract && p.contract.years > 0 && !p.contract.twoWay;
+  const ours = (p as any).bird === u || p.team === u;
+  const market = faActive(w) && !extending;
+  const mxS = maxFor(p, u, extending ? cs + p.contract!.years : cs), mnS = minSalary(cs, yos(p));
+  const askV = Math.min(p.ask ?? marketSalary(p, cs), mxS ?? Infinity);
+  const prior = market ? ourOffer(w, pid) : undefined;
+  const [sal, setSal] = useState(prior?.first ?? Math.round(askV / 5000) * 5000);
+  const [yrs, setYrs] = useState(prior?.years ?? Math.min(3, Math.max(1, (p.age ?? 27) >= 31 ? 2 : 3)));
+  const maxR = maxRaise(cs, !!birdLevel(p, u, cs));
+  const [raise, setRaise] = useState(prior?.raise ?? Math.round(Math.min(maxR * 0.5, 0.05) * 200) / 200);
+  const [opt, setOpt] = useState<'none' | 'player' | 'team'>((prior?.opts?.[0]?.kind as any) ?? 'none');
+  const canTwoWay = !extending && twoWayEligible(w, p, yos(p));
+  const [two, setTwo] = useState(!!prior?.twoWay);
+  const [res, setRes] = useState<{ ok: boolean; text: string } | null>(null);
+  const yearsMax = extending ? R.maxYearsOwn : ours ? R.maxYearsOwn : R.maxYearsOther;
+  const opts = opt !== 'none' && yrs >= 2 && !two ? [{ kind: opt, idx: yrs - 1 }] as any : [];
+  const salary = two ? twoWaySalary(cs) : sal;
+  const legal = signingCheck(w, u, p, salary, yrs, { twoWay: two });
   const tries = (p as any).offerTries ?? 0;
-  const legal = signingCheck(w, u, p, sal, own && !inSeason ? yrs : yrs);
+  const rivals = market ? offersFor(w, pid).filter(o => o.team !== u) : [];
+  const decideAt = market ? faState(w).decideAt[pid] : undefined;
+  const sched = Array.from({ length: yrs }, (_, k) => Math.round(salary * (1 + (two ? 0 : raise) * k) / 1000) * 1000);
   const go_ = () => {
-    if (!legal.ok) { setRes({ ok: false, text: legal.reason ?? 'Not allowed under the cap rules.' }); return; }
-    const r = playerAccepts(w, p, u, sal, yrs);
+    if (!legal.ok) { setRes({ ok: false, text: legal.reason ?? 'Not allowed under the rules.' }); return; }
+    if (market) {
+      const r = makeOffer(w, u, p, { first: salary, years: yrs, raise: two ? 0 : raise, opts, twoWay: two });
+      if (!r.ok) { setRes({ ok: false, text: r.reason ?? 'Offer not allowed.' }); return; }
+      const d = faState(w).decideAt[pid];
+      const n = offersFor(w, pid).length;
+      commit();
+      setRes({ ok: true, text: `Offer on the table. ${n > 1 ? `He has ${n} offers` : 'Ours is his only offer so far'} and expects to decide around day ${Math.max(d ?? 0, faState(w).day + 1)} of free agency.` });
+      return;
+    }
+    const r = playerAccepts(w, p, u, salary, yrs);
     (p as any).offerTries = tries + 1;
     if (r.ok) {
-      if (own) { p.contract = { salary: sal, years: yrs + (w.season.phase === 'freeagency' ? 0 : p.contract?.years ?? 0), known: null, provenance: 'Signed in this save (simulated)', signed: w.season.day }; delete (p as any).bird; noteSigning(w, u, legal.via); }
-      else signPlayer(w, pid, u, sal, yrs);
+      const done = signPlayer(w, pid, u, salary, yrs, { raise: two ? 0 : raise, opts, twoWay: two });
+      if (!done.ok) { setRes({ ok: false, text: done.reason ?? 'Not allowed.' }); return; }
       const m = msgId ? w.messages.find(x => x.id === msgId) : w.messages.find(x => !x.resolved && x.subject.includes(p.name) && x.role === 'Agent');
       if (m) m.resolved = true;
       (p as any).offerTries = 0;
@@ -165,29 +191,42 @@ function OfferModal({ w, pid, msgId }: { w: World; pid: string; msgId?: string }
     } else if (tries >= 2) { p.ask = Math.round(askV * 1.04 / 5000) * 5000; commit(); }
     setRes(r);
   };
-  return <Shell title={`${own ? 'Contract talks' : 'Offer'}: ${p.name}`}>
+  const viaText: Record<string, string> = { room: 'Fits under the cap.', bird: `${legal.note ?? 'Bird rights'}: we can go over the cap to keep him.`, rookie: 'Draft pick: rookie contract.', mle: 'Uses our mid-level exception.', tpmle: 'Uses the taxpayer mid-level exception.',
+    roomexc: 'Uses the room exception.', exception: 'Uses the $1m exception.', min: 'Minimum contract: always allowed.', budget: "Within the owner's budget (no cap in this era).", extension: 'Extension: added to his current deal.', twoway: `Two-way contract at ${fmtM(twoWaySalary(cs))}: outside the cap and the ${RR.max}, limited to ${RR.twoWayGames} games, no playoffs.` };
+  return <Shell title={`${extending ? 'Extension' : ours ? 'Re-sign' : market ? 'Free agency offer' : 'Offer'}: ${p.name}`}>
     <div class="offer">
       <Headshot p={p} size={96} />
       <div>
         <div class="li"><span>Asking</span><b>{fmt$(askV)} / yr</b></div>
-        <div class="li"><span>Age · position</span><b>{p.age} · {p.pos}</b></div>
+        <div class="li"><span>Age · seasons in league</span><b>{p.age} · {yos(p)}</b></div>
         <div class="li"><span>Payroll {cs}–{String(cs + 1).slice(2)}</span><b>{fmt$(teamPayroll(w, u))}{R.hasCap ? ` · cap ${fmtM(R.cap)}` : ` · owner budget ${fmt$(w.owner.budget)}`}</b></div>
         {R.hasCap && <div class="li"><span>Cap room</span><b>{fmtM(capRoom(w, u))}</b></div>}
         <div class="li"><span>{mxS ? 'Max · min' : 'League minimum'}</span><b>{mxS ? `${fmtM(mxS)} · ${fmtM(mnS)}` : fmtM(mnS)}</b></div>
+        {market && <div class="li"><span>Market</span><b>{rivals.length ? `${rivals.length} other team${rivals.length > 1 ? 's' : ''} bidding` : 'No other offers yet'}{decideAt != null ? ` · decides ~day ${decideAt}` : ''}</b></div>}
+        {(p as any).rfa && <div class="li"><span>Restricted</span><b>{w.teams[(p as any).rfa.team].name} can match{(p as any).rfa.team === u ? ' (that is us)' : ''}</b></div>}
       </div>
     </div>
     {res?.ok ? <><div class="reply ok">{res.text}</div><div class="row-btns"><Btn kind="big" auto onClick={closeModal}>Done</Btn></div></> : <>
-      <div class="stepper"><span>Salary per year</span>
-        <Btn kind="sm ghost" onClick={() => setSal(Math.max(mnS, sal - step))}>−</Btn><b>{fmt$(sal)}</b><Btn kind="sm ghost" onClick={() => setSal(Math.min(mxS ?? Infinity, sal + step))}>+</Btn>
-        {legal.most != null && !legal.ok && <Btn kind="sm ghost" onClick={() => setSal(legal.most!)}>Most we can offer</Btn>}</div>
-      <div class={`cap-line ${legal.ok ? 'ok' : 'bad'}`}>{legal.ok ? ({ room: 'Fits under the cap.', bird: 'Bird rights: we can go over the cap to keep him.', rookie: 'Draft pick: rookie contract.', mle: 'Uses our mid-level exception.', tpmle: 'Uses the taxpayer mid-level exception.', roomexc: 'Uses the room exception.', exception: 'Uses the $1m exception.', min: 'Minimum contract: always allowed.', budget: 'Within the owner\'s budget (no cap in this era).' } as any)[legal.via!] : legal.reason}</div>
-      <div class="stepper"><span>Years</span>
-        {[1, 2, 3, 4, 5, 6, 7].filter(y => y <= (own ? R.maxYearsOwn : R.maxYearsOther) && y <= 5 + (R.maxYearsOwn > 5 ? 2 : 0)).map(y => <button data-nav class={`btn sm ${yrs === y ? '' : 'ghost'}`} onClick={() => setYrs(y)}>{y}</button>)}</div>
-      {!own && <NeedImpact w={w} after={[...t.roster, p.id]} />}
-      {full && <div class="reply bad">Roster is full ({t.roster.length}). Release someone first.</div>}
+      {canTwoWay && <div class="stepper"><span>Contract type</span>
+        <button data-nav class={`btn sm ${!two ? '' : 'ghost'}`} onClick={() => setTwo(false)}>Standard</button><button data-nav class={`btn sm ${two ? '' : 'ghost'}`} onClick={() => setTwo(true)}>Two-way</button></div>}
+      {!two && <div class="stepper"><span>{extending ? 'First new season' : 'First-year salary'}</span>
+        <Btn kind="sm ghost" onClick={() => setSal(Math.max(mnS, sal - Math.max(5000, Math.round(R.cap * 0.005 / 5000) * 5000)))}>−</Btn><b>{fmt$(sal)}</b><Btn kind="sm ghost" onClick={() => setSal(Math.min(mxS ?? Infinity, sal + Math.max(5000, Math.round(R.cap * 0.005 / 5000) * 5000)))}>+</Btn>
+        {legal.most != null && !legal.ok && <Btn kind="sm ghost" onClick={() => setSal(legal.most!)}>Most we can offer</Btn>}</div>}
+      <div class="stepper"><span>{extending ? 'New seasons' : 'Years'}</span>
+        {Array.from({ length: two ? 2 : yearsMax }, (_, i) => i + 1).map(y => <button data-nav class={`btn sm ${yrs === y ? '' : 'ghost'}`} onClick={() => setYrs(y)}>{y}</button>)}</div>
+      {!two && yrs > 1 && <div class="stepper"><span>Annual raise</span>
+        <Btn kind="sm ghost" onClick={() => setRaise(Math.max(0, Math.round((raise - 0.005) * 1000) / 1000))}>−</Btn><b>{(raise * 100).toFixed(1)}%</b><Btn kind="sm ghost" onClick={() => setRaise(Math.min(maxR, Math.round((raise + 0.005) * 1000) / 1000))}>+</Btn>
+        <span class="muted small">max {(maxR * 100).toFixed(1)}%{cs < 1999 ? ' (no CBA limit yet)' : ''}</span></div>}
+      {!two && yrs > 1 && !extending && <div class="stepper"><span>Final season</span>
+        {(['none', 'player', 'team'] as const).map(k => <button data-nav class={`btn sm ${opt === k ? '' : 'ghost'}`} onClick={() => setOpt(k)}>{k === 'none' ? 'Guaranteed' : k === 'player' ? 'Player option' : 'Team option'}</button>)}</div>}
+      <div class="sched">{sched.map((v, k) => <span class={opts.some((o: any) => o.idx === k) ? 'opt' : ''}><i>{seasonLabel(cs + (extending ? p.contract!.years : 0) + k)}</i>{fmtM(v)}</span>)}</div>
+      <div class={`cap-line ${legal.ok ? 'ok' : 'bad'}`}>{legal.ok ? viaText[legal.via!] : legal.reason}</div>
+      {!ours && !extending && !two && <NeedImpact w={w} after={[...t.roster, p.id]} />}
       {res && <div class="reply">{res.text}</div>}
-      <div class="row-btns"><Btn kind="big" auto disabled={full || !legal.ok} onClick={go_}>Make the offer</Btn><Btn kind="ghost" onClick={closeModal}>Walk away</Btn></div>
-      <div class="muted small">Agents weigh money, role, years and whether you can win. Lowballing repeatedly makes them dig in.</div>
+      <div class="row-btns"><Btn kind="big" auto disabled={!legal.ok} onClick={go_}>{market ? (prior ? 'Update our offer' : 'Make the offer') : extending ? 'Offer the extension' : 'Make the offer'}</Btn>
+        {prior && <Btn kind="ghost" onClick={() => { withdrawOffer(w, u, pid); commit(); closeModal(); toast('Offer withdrawn.'); }}>Withdraw offer</Btn>}
+        <Btn kind="ghost" onClick={closeModal}>Walk away</Btn></div>
+      <div class="muted small">{market ? 'Players weigh every offer: the money over the whole deal, the years, a winner, a role, and loyalty to the team that holds their Bird rights.' : 'Agents weigh money, role, years and whether you can win. Lowballing repeatedly makes them dig in.'}</div>
     </>}
   </Shell>;
 }
@@ -251,9 +290,15 @@ export function Modals() {
     case 'season': return <Shell wide cls="season-modal" title="Season record"><SeasonCard w={w} year={m.arg.year} /></Shell>;
     case 'box': { const g = w.season.games.find(x => x.id === m.arg.id); return g?.box ? <Shell wide title="Box score"><BoxScore w={w} g={g} /></Shell> : null; }
     case 'offer': return <OfferModal w={w} pid={m.arg.pid} msgId={m.arg.msgId} />;
-    case 'release': { const p = w.players[m.arg.pid]; return <Shell title={`Release ${p.name}?`}>
-      <p>He'll become a free agent. {p.contract && p.contract.years > 0 ? `In this alpha, his remaining salary (${fmt$(p.contract.salary)} × ${p.contract.years}) comes off the books.` : ''}</p>
-      <div class="row-btns"><Btn kind="big" auto onClick={() => { releasePlayer(w, p.id); closeModal(); commit(); toast(`${p.name} released.`); }}>Release him</Btn><Btn kind="ghost" onClick={closeModal}>Keep him</Btn></div></Shell>; }
+    case 'release': { const p = w.players[m.arg.pid]; const c = p.contract; const left = c && !c.twoWay ? c.years : 0;
+      const st = left > 0 && canStretch(capSeason(w)) ? stretchTerms(c!) : null;
+      const owed = left > 0 ? Array.from({ length: left }, (_, k) => salaryAt(c, k)).reduce((a, b) => a + b, 0) : 0;
+      return <Shell title={`Release ${p.name}?`}>
+      <p>He'll become a free agent.{left > 0 ? ` His guaranteed money stays on our books as dead money: ${fmt$(owed)} over ${left} season${left > 1 ? 's' : ''}.` : c?.twoWay ? ' Two-way money does not touch the cap.' : ''}</p>
+      {st && <p class="muted">Or waive and stretch: {fmt$(st.salary)} a season for {st.years} seasons (smaller hit now, longer on the books).</p>}
+      <div class="row-btns"><Btn kind="big" auto onClick={() => { releasePlayer(w, p.id); closeModal(); commit(); toast(`${p.name} released.`); }}>Release him</Btn>
+        {st && <Btn onClick={() => { releasePlayer(w, p.id, true); closeModal(); commit(); toast(`${p.name} waived and stretched.`); }}>Waive and stretch</Btn>}
+        <Btn kind="ghost" onClick={closeModal}>Keep him</Btn></div></Shell>; }
     case 'clock': return <Shell title="Franchise clock"><ClockPicker /></Shell>;
     case 'coachTalk': return <CoachTalk w={w} />;
     case 'ownerTalk': return <OwnerTalk w={w} />;

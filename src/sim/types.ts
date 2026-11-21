@@ -10,7 +10,10 @@ export interface Ratings {
 }
 export type SkillKey = Exclude<keyof Ratings, 'hgt'>;
 
-export interface Contract { salary: number; years: number; known: number | null; provenance: string; signed?: string; rookie?: boolean; }
+export interface ContractOption { kind: 'player' | 'team'; idx: number; pending?: boolean }
+/** salary = this cap season's salary (sched[0]); years = seasons left including this one; sched = salary for each of them. */
+export interface Contract { salary: number; years: number; known: number | null; provenance: string; signed?: string; rookie?: boolean;
+  sched?: number[]; opts?: ContractOption[]; twoWay?: boolean; scale?: boolean; fresh?: boolean; }
 
 export interface Injury { type: string; daysLeft: number; severity: 'minor' | 'moderate' | 'serious'; since: string; }
 

@@ -1,5 +1,6 @@
 // GM layer: front-office commands, AI GM behaviour, owner, agents, coach requests (GDD §8, §11, §12, §15).
 import type { ClockState, Player, Team, World } from './types';
+import { rules as eraRoster, rosterCount } from './rules';
 import { clamp, sigmoid, stream } from './rng';
 import { coachRespond, playerValue } from './coach';
 import { addEvent, addMessage, addNews, potentialOvr, projectedWins, teamStrength } from './world';
@@ -11,9 +12,14 @@ import { hypeOf } from './impact';
 import { ERA } from './history';
 import { capRules, capSeason, signingCheck, noteSigning, bestOffer, addDeadMoney, rollDeadMoney, teamPayroll, marketValue, maxSalary, yos, aiSpendLine, minSalary } from './cap';
 import type { SignCheck } from './cap';
+import { makeContract, extendContract, rollContract, optionNow, birdYears, birdLevel, qualifyingOffer, salaryAt, BIRD_LABEL } from './contracts';
+import type { ContractTerms } from './contracts';
+import { faState, declineOption, exerciseOption, finishFreeAgency, setMarketAsk } from './market';
+import { tradeDeadline } from './rules';
 import { checkCoachRequest, makeCoachRequest, openRequest, worstNeed, needDef } from './needs';
 
-export const TRADE_DEADLINE = (year: number) => `${year + 1}-02-15`; // alpha assumption, not a verified 1977 rule
+/** Trade deadline for the season starting in `year` (era dates; see rules.ts). */
+export const TRADE_DEADLINE = (year: number) => tradeDeadline(year);
 export const fmt$ = (n: number) => n >= 1e6 ? `$${(n / 1e6).toFixed(2)}m` : `$${Math.round(n / 1000)}k`;
 /** Payroll on the books for the cap season, dead money included. */
 export const payroll = (w: World, tid: string) => teamPayroll(w, tid);
@@ -60,35 +66,46 @@ export function playerAccepts(w: World, p: Player, tid: string, salary: number, 
   return { ok, text: `${agent} for ${p.name}: "We'll pass for now."` };
 }
 
-/** Sign a player. Every signing goes through the era's cap rules; returns the check (nothing happens when it fails). */
-export function signPlayer(w: World, pid: string, tid: string, salary: number, years: number): SignCheck {
+/** Sign (or extend) a player. Every signing goes through the era's rules; returns the check (nothing happens when it fails). */
+export function signPlayer(w: World, pid: string, tid: string, salary: number, years: number, terms: ContractTerms = {}): SignCheck {
   const p = w.players[pid];
-  const check = signingCheck(w, tid, p, salary, years);
+  const check = signingCheck(w, tid, p, salary, years, { twoWay: terms.twoWay });
   if (!check.ok) return check;
   noteSigning(w, tid, check.via);
-  if (p.team) { const old = w.teams[p.team]; old.roster = old.roster.filter(x => x !== pid); }
+  if (check.via === 'extension' && p.contract) {
+    p.contract = extendContract(p.contract, salary, years, terms.raise ?? 0, w.season.day);
+    addEvent(w, 'signing', `${tid} extended ${p.name} (${fmt$(salary)} × ${years} more)`, [pid]);
+    if (playerValue(p) > 62) addNews(w, `${w.teams[tid].name} extend ${p.name}`, `${years} more season${years > 1 ? 's' : ''}, starting at ${fmt$(salary)}.`, 'transactions');
+    return check;
+  }
+  if (p.team && p.team !== tid) { const old = w.teams[p.team]; old.roster = old.roster.filter(x => x !== pid); }
+  if ((p as any).bird !== tid && p.team !== tid) (p as any).birdYears = 0;
   w.freeAgents = w.freeAgents.filter(x => x !== pid);
-  p.team = tid; w.teams[tid].roster.push(pid); delete (p as any).bird;
-  p.contract = { salary, years, known: null, provenance: 'Signed in this save (simulated)', signed: w.season.day };
-  p.rosterStatus = 'Signed';
-  addEvent(w, 'signing', `${tid} signed ${p.name} (${fmt$(salary)} × ${years})`, [pid]);
+  p.team = tid; if (!w.teams[tid].roster.includes(pid)) w.teams[tid].roster.push(pid);
+  delete (p as any).bird; delete (p as any).rfa; delete (p as any).renounced;
+  if ((w as any).fa) delete faState(w).offers[pid];
+  const first = check.via === 'twoway' ? check.most! : salary;
+  p.contract = makeContract(first, years, { ...terms, signed: w.season.day, provenance: terms.twoWay ? 'Two-way contract (simulated)' : 'Signed in this save (simulated)' });
+  p.rosterStatus = terms.twoWay ? 'Two-way contract' : 'Signed';
+  addEvent(w, 'signing', `${tid} signed ${p.name} (${fmt$(first)} × ${years})`, [pid]);
   if (tid === w.meta.userTeam) checkCoachRequest(w);
-  if (playerValue(p) > 58) addNews(w, `${w.teams[tid].name} sign ${p.name}`, `${years}-year deal, terms ${fmt$(salary)}/yr (simulated).`, 'transactions');
+  if (playerValue(p) > 58) addNews(w, `${w.teams[tid].name} sign ${p.name}`, `${years}-year deal, terms ${fmt$(first)}/yr (simulated).`, 'transactions');
   return check;
 }
 
-export function releasePlayer(w: World, pid: string) {
+/** Waive a player: his guaranteed money stays on the books (spread over 2n+1 seasons with the stretch provision, 2011 on). */
+export function releasePlayer(w: World, pid: string, stretch = false) {
   const p = w.players[pid];
   const t = w.teams[p.team!];
-  addDeadMoney(w, t.id, p); // guaranteed money stays on the books
+  addDeadMoney(w, t.id, p, stretch);
   if ((p.contract?.years ?? 0) <= 0) delete (p as any).bird; // letting an unsigned free agent go renounces his rights
   t.roster = t.roster.filter(x => x !== pid);
+  (p as any).birdYears = 0;
   p.team = null; p.ask = Math.max(minSalary(capSeason(w), yos(p)), Math.round(marketSalary(p, capSeason(w)) * 0.8 / 5000) * 5000); p.contract = null; p.rosterStatus = `Waived by ${t.abbr}`;
   w.freeAgents.push(pid);
   addEvent(w, 'release', `${t.abbr} waived ${p.name}`, [pid]);
 }
 
-// ------------------------------------------------------------------ coach requests (user → coach, never direct control)
 export function requestCoach(w: World, pid: string, kind: 'more' | 'protect' | 'develop') {
   const team = w.teams[w.meta.userTeam];
   const coach = w.coaches[team.coach];
@@ -171,7 +188,8 @@ export function aiDailyMoves(w: World) {
   for (const t of Object.values(w.teams)) {
     if (t.id === w.meta.userTeam) continue;
     const healthy = t.roster.filter(id => !(w.players[id].injury && w.players[id].injury!.daysLeft > 3)).length;
-    if (t.roster.length < 10 || (healthy < 9 && t.roster.length < 12)) {
+    const R = eraRoster(w);
+    if (rosterCount(w, t.id) < R.min - 1 || (healthy < 9 && rosterCount(w, t.id) < R.max)) {
       // injury cover: the best free agent who will take what the cap allows
       const pool = w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && rightsOk(p, t.id)).sort((a, b) => playerValue(b) - playerValue(a));
       for (const best of pool.slice(0, 8)) {
@@ -276,70 +294,69 @@ export function ownerSeasonReview(w: World) {
   } else addMessage(w, { date: w.season.day, from: w.owner.name, role: 'Owner', subject: 'End-of-season review', body, urgent: 1, tag: 'Owner' });
 }
 
+/** Start of the offseason: a season of service is added, contracts roll a year, options come due, and every expiring
+ *  player enters free agency (his team keeps his Bird rights and a cap hold; first-round rookie-scale players can be made
+ *  restricted with a qualifying offer). */
 export function resolveExpiring(w: World) {
   const user = w.meta.userTeam;
-  const rng = stream(w.meta.seed, 'offseason', w.season.year);
   const season = capSeason(w);
+  const R = capRules(season);
   rollDeadMoney(w);
   for (const t of Object.values(w.teams)) {
     for (const id of [...t.roster]) {
       const p = w.players[id];
-      if (!p.contract) continue;
-      if ((p.contract as any).fresh) { delete (p.contract as any).fresh; continue; } // a contract signed this summer starts next season
-      p.contract.years--;
-      if (p.contract.years > 0) continue;
-      (p as any).bird = t.id;
+      if (!p) continue;
+      (p as any).birdYears = birdYears(p) + 1;
+      const c = p.contract;
+      if (!c) continue;
+      if (c.fresh) { delete c.fresh; continue; } // signed this summer: starts next season
+      (p as any).prevSalary = c.salary;
+      rollContract(c);
+      if (c.years > 0) { const op = optionNow(c); if (op) optionDue(w, p, op.kind); continue; }
+      t.roster = t.roster.filter(x => x !== id);
+      p.team = null; p.contract = null;
+      (p as any).bird = t.id; delete (p as any).renounced;
       p.ask = marketSalary(p, season);
+      const qo = c.scale && season >= 1995 && !c.twoWay && (t.id === user || playerValue(p) >= 56);
+      if (qo) { (p as any).rfa = { team: t.id, qo: qualifyingOffer(p, season) }; p.rosterStatus = `Restricted free agent (${t.abbr})`; }
+      else p.rosterStatus = `Free agent (was ${t.abbr})`;
+      if (!w.freeAgents.includes(id)) w.freeAgents.push(id);
       if (t.id === user) {
-        addMessage(w, { date: w.season.day, from: `Agent for ${p.name}`, role: 'Agent', subject: `${p.name} is a free agent unless re-signed`, body: `His camp wants about ${fmt$(p.ask)} a year. ${capRules(season).hasCap ? 'You hold his Bird rights, so you can go over the cap to keep him, and his cap hold counts against your room until you sign or renounce him.' : ''} If we don't re-sign him before the season, he'll test the market.`,
-          urgent: 2, tag: 'Agent', actions: [{ label: 'Offer contract', cmd: 'extend', arg: { pid: id } }, { label: 'Let him go', cmd: 'letGo', arg: { pid: id } }] });
-        continue;
+        const level = birdLevel(p, user, season);
+        addMessage(w, { date: w.season.day, from: `Agent for ${p.name}`, role: 'Agent', subject: `${p.name} is a ${qo ? 'restricted ' : ''}free agent`, urgent: 2, tag: 'Agent',
+          body: `His camp wants about ${fmt$(p.ask)} a year.${R.hasCap ? ` We hold ${level ? BIRD_LABEL[level] : 'no Bird rights'}${level === 'full' ? ', so we can go over the cap to keep him' : ''}. His cap hold counts against our room until he signs or we renounce him.` : ''}${qo ? ` We have tendered a ${fmt$((p as any).rfa.qo)} qualifying offer: we can match any offer sheet he signs.` : ''} Other teams can bid from the first day of free agency.`,
+          actions: [{ label: 'Make an offer', cmd: 'extend', arg: { pid: id } }, ...(qo ? [{ label: 'Withdraw qualifying offer', cmd: 'withdrawQO', arg: { pid: id } }] : []), { label: 'Renounce him', cmd: 'letGo', arg: { pid: id } }] });
       }
     }
   }
-  // AI re-signings with Bird rights, best players first, within each club's spending line
-  for (const t of Object.values(w.teams)) {
-    if (t.id === user) continue;
-    const exp = t.roster.map(id => w.players[id]).filter(p => p.contract && p.contract.years <= 0).sort((a, b) => playerValue(b) - playerValue(a));
-    for (const p of exp) {
-      const line = aiSpendLine(w, t);
-      const sal = Math.min(p.ask ?? marketSalary(p, season), maxSalary(season, yos(p), p.contract!.salary) ?? Infinity);
-      const v = playerValue(p);
-      const worth = v > 52 && (p.age ?? 30) < 34 && rng.chance(v > 72 ? 0.92 : 0.65);
-      const fits = teamPayroll(w, t.id) + sal <= line || (v >= 80 && teamPayroll(w, t.id) + sal <= line * 1.12);
-      const yrs = clamp(v > 75 && (p.age ?? 30) < 30 ? rng.int(3, 5) : rng.int(1, 3), 1, capRules(season).maxYearsOwn);
-      if (worth && fits) { p.contract = { salary: sal, years: yrs, known: null, provenance: 'Re-signed in this save (simulated)', signed: w.season.day }; delete (p as any).bird; }
-      else { t.roster = t.roster.filter(x => x !== p.id); p.team = null; p.contract = null; w.freeAgents.push(p.id); p.rosterStatus = `Free agent (was ${t.abbr})`; }
-    }
+  faState(w);
+  addMessage(w, { date: w.season.day, from: 'League office', role: 'League', subject: 'Free agency is open', body: `Thirty days of free agency start now.${season >= 1999 ? ' Deals can be agreed at once but only become official when the moratorium lifts on July 6.' : ''} Make offers from the Front Office; players weigh every offer before choosing. ${R.label} for ${season}–${String(season + 1).slice(2)}; see Finances for your cap sheet.`, urgent: 1, tag: 'League', actions: [{ label: 'Free agents', cmd: 'goto', arg: 'fa' }] });
+}
+/** An option year comes due: players opt out when the market pays more; AI teams keep useful players; the user decides. */
+function optionDue(w: World, p: Player, kind: 'player' | 'team') {
+  const c = p.contract!;
+  const season = capSeason(w);
+  const market = marketSalary(p, season);
+  const t = w.teams[p.team!];
+  if (kind === 'player') {
+    const out = market > c.salary * 1.12 && (p.age ?? 30) < 33;
+    if (out) { declineOption(w, p.id); if (t.id === w.meta.userTeam) addMessage(w, { date: w.season.day, from: `Agent for ${p.name}`, role: 'Agent', subject: `${p.name} opts out`, body: `He declined his ${fmt$(c.salary)} player option to test free agency. We keep his Bird rights.`, urgent: 2, tag: 'Agent', actions: [{ label: 'Make an offer', cmd: 'extend', arg: { pid: p.id } }] }); }
+    else { exerciseOption(w, p.id); if (t.id === w.meta.userTeam) addMessage(w, { date: w.season.day, from: `Agent for ${p.name}`, role: 'Agent', subject: `${p.name} picks up his option`, body: `He exercised his ${fmt$(c.salary)} player option for ${season}–${String(season + 1).slice(2)}.`, urgent: 0, tag: 'Agent' }); }
+    return;
   }
-  addMessage(w, { date: w.season.day, from: 'League office', role: 'League', subject: 'Free agency is open', body: `Re-sign your players, sign free agents and draft picks, then start the new season from the Front Office. ${capRules(season).label} for ${season}–${String(season + 1).slice(2)}; see Finances for your cap sheet.`, urgent: 1, tag: 'League', actions: [{ label: 'Open Finances', cmd: 'goto', arg: 'finances' }] });
+  if (t.id === w.meta.userTeam) {
+    c.opts!.find(o => o.idx === 0)!.pending = true;
+    addMessage(w, { date: w.season.day, from: 'Front office', role: 'GM', subject: `Team option: ${p.name}`, urgent: 3, tag: 'Decision',
+      body: `${p.name}'s ${season}–${String(season + 1).slice(2)} season is a team option at ${fmt$(c.salary)} (his market value is about ${fmt$(market)}). Exercise it to keep him on those terms, or decline and he becomes a free agent${capRules(season).hasCap ? ' (we keep his Bird rights)' : ''}.`,
+      actions: [{ label: 'Exercise the option', cmd: 'exerciseOption', arg: { pid: p.id } }, { label: 'Decline it', cmd: 'declineOption', arg: { pid: p.id } }] });
+    return;
+  }
+  if (market >= c.salary * 0.85 || (c.scale && playerValue(p) >= 50)) exerciseOption(w, p.id); else declineOption(w, p.id);
 }
 
+/** Run free agency to the end of July for everyone (the user's open decisions take the default answer). */
 export function aiFreeAgency(w: World) {
-  const rng = stream(w.meta.seed, 'fa', w.season.year);
-  const season = capSeason(w);
-  const order = Object.values(w.teams).filter(t => t.id !== w.meta.userTeam).sort(() => rng.next() - 0.5);
-  for (let pass = 0; pass < 5; pass++) for (const t of order) {
-    if (t.roster.length >= 12) continue;
-    const line = aiSpendLine(w, t);
-    const pool = w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && rightsOk(p, t.id)).sort((a, b) => playerValue(b) - playerValue(a)).slice(0, 14);
-    for (const p of pool) {
-      const ask = p.ask ?? marketSalary(p, season);
-      const years = rng.int(1, playerValue(p) > 70 && (p.age ?? 30) < 30 ? 4 : 2);
-      let offer = Math.min(ask, bestOffer(w, t.id, p, years));
-      const mn = minSalary(season, yos(p));
-      // a player takes a little less to get a deal done, not a lot less; minimum guys sign for the minimum
-      if (offer < ask * 0.85 && offer > mn) continue;
-      if (offer <= mn) { if (t.roster.length >= 11 && playerValue(p) < 50) continue; offer = mn; }
-      if (teamPayroll(w, t.id) + offer > line && offer > mn) continue;
-      if (signPlayer(w, p.id, t.id, offer, offer <= mn ? Math.min(2, years) : years).ok) break;
-    }
-  }
-  // trim to 12
-  for (const t of order) while (t.roster.length > 12) {
-    const worst = t.roster.map(id => w.players[id]).sort((a, b) => playerValue(a) - playerValue(b))[0];
-    releasePlayer(w, worst.id);
-  }
+  finishFreeAgency(w);
 }
 
 export function teamPayrollSummary(w: World, tid: string) {
@@ -347,3 +364,4 @@ export function teamPayrollSummary(w: World, tid: string) {
   return { pay, budget: w.teams[tid].payrollBudget ?? pay, strength: teamStrength(w, tid) };
 }
 export { projectedWins };
+setMarketAsk((w, p) => marketSalary(p, capSeason(w)));

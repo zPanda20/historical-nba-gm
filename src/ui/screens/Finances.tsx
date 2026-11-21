@@ -3,7 +3,9 @@
 import { useStore, openModal, commit } from '../store';
 import { Panel, Headshot, Chip, Btn, seasonLabel } from '../util';
 import { capFor } from '../../sim/history';
-import { capRules, capSeason, teamPayroll, capHolds, capRoom, deadMoney, taxBill, isRepeater, taxHistory, maxSalary, minSalary, yos, fmtM, marketValue } from '../../sim/cap';
+import { capRules, capSeason, teamPayroll, capHolds, capRoom, deadMoney, taxBill, isRepeater, taxHistory, maxSalary, minSalary, yos, fmtM, marketValue, holdPlayers, capHold } from '../../sim/cap';
+import { salaryAt, birdLevel, maxRaise, canStretch, BIRD_LABEL } from '../../sim/contracts';
+import { rules as eraRules, tradeDeadline } from '../../sim/rules';
 import { playerValue } from '../../sim/coach';
 import type { Player, World } from '../../sim/types';
 
@@ -22,6 +24,13 @@ export function Finances() {
   const ps = t.roster.map(id => w.players[id]).filter(Boolean).sort((a, b) => (b.contract?.salary ?? 0) - (a.contract?.salary ?? 0));
   const plan = planOf(w);
   const dead = deadMoney(t);
+  const deadBy = Object.values(dead.reduce((m: Record<string, { name: string; at: number[] }>, d) => {
+    const e = (m[d.pid] ??= { name: d.name, at: Array(SPAN).fill(0) });
+    for (let k = d.from ?? 0; k < Math.min(SPAN, d.years); k++) e.at[k] += d.salary;
+    return m;
+  }, {}));
+  const holders = holdPlayers(w, u).filter(p => !p.team);
+  const RR = eraRules(w);
   const holds = capHolds(w, u);
   const pay = teamPayroll(w, u);
   const committed = seasons.map((_, k) => teamPayroll(w, u, k));
@@ -71,15 +80,18 @@ export function Finances() {
             return <tr>
               <td class="l"><button data-nav class="tp-pl" onClick={() => openModal('player', { id: p.id })}><Headshot p={p} size={26} /><span>{p.name}</span></button></td>
               <td>{p.age}</td><td><span class="ovr">{p.ovr}</span></td>
-              <td class="l">{p.contract?.rookie ? <Chip>Rookie</Chip> : null}{bird ? <Chip kind="good">Bird</Chip> : null}{left <= 0 ? <Chip kind="warn">Unsigned</Chip> : null}</td>
-              {seasons.map((_, k) => k < left ? <td class="fin-c">{fmtM(p.contract!.salary)}</td>
+              <td class="l">{p.contract?.twoWay ? <Chip>Two-way</Chip> : p.contract?.scale ? <Chip>Rookie scale</Chip> : p.contract?.rookie ? <Chip>Rookie</Chip> : null}{bird ? <Chip kind="good">{(() => { const lv = birdLevel(p, u, cs + Math.max(0, left)); return lv === 'full' ? 'Bird' : lv === 'early' ? 'Early Bird' : lv === 'non' ? 'Non-Bird' : 'Bird'; })()}</Chip> : null}{left <= 0 ? <Chip kind="warn">Unsigned</Chip> : null}</td>
+              {seasons.map((_, k) => k < left ? (() => { const o = p.contract!.opts?.find(x => x.idx === k); return <td class={`fin-c ${o ? 'opt' : ''} ${p.contract!.twoWay ? 'tw' : ''}`} title={o ? `${o.kind === 'team' ? 'Team' : 'Player'} option` : p.contract!.twoWay ? 'Two-way: not on the cap' : ''}>{fmtM(salaryAt(p.contract, k))}{o ? <sup>{o.kind === 'team' ? 'TO' : 'PO'}</sup> : null}</td>; })()
                 : pl && k >= left && k < left + pl.years ? <td class="fin-c plan" title="Planned re-signing (estimate)">{fmtM(pl.salary)}</td>
                 : k === left ? <td class="fin-c fa">{k === 0 && left <= 0 ? `Hold ${fmtM(Math.round((p.contract?.salary ?? minSalary(cs, yos(p))) * 1.3))}` : 'Free agent'}</td> : <td class="fin-c none" />)}
               <td>{left <= SPAN - 1 ? <button data-nav class={`fin-plan ${pl ? 'on' : ''}`} title={pl ? 'Remove from plan' : 'Plan to re-sign at an estimated market price'} onClick={() => togglePlan(p)}>{pl ? '✓' : '+'}</button> : null}</td>
             </tr>;
           })}
-          {dead.map(d => <tr class="dead"><td class="l">{d.name} <span class="muted small">waived</span></td><td /><td /><td class="l"><Chip kind="bad">Dead</Chip></td>
-            {seasons.map((_, k) => k < d.years ? <td class="fin-c">{fmtM(d.salary)}</td> : <td class="fin-c none" />)}<td /></tr>)}
+          {holders.map(p => <tr class="hold"><td class="l"><button data-nav class="tp-pl" onClick={() => openModal('offer', { pid: p.id })}><Headshot p={p} size={26} /><span>{p.name}</span></button></td><td>{p.age}</td><td><span class="ovr">{p.ovr}</span></td>
+            <td class="l"><Chip kind="warn">{(p as any).rfa ? 'Restricted FA' : 'Free agent'}</Chip>{(() => { const lv = birdLevel(p, u, cs); return lv ? <Chip kind="good">{BIRD_LABEL[lv].replace(' rights', '')}</Chip> : null; })()}</td>
+            {seasons.map((_, k) => k === 0 ? <td class="fin-c fa" title="Cap hold until he signs or is renounced">Hold {fmtM(capHold(w, p))}</td> : <td class="fin-c none" />)}<td /></tr>)}
+          {deadBy.map(d => <tr class="dead"><td class="l">{d.name} <span class="muted small">waived</span></td><td /><td /><td class="l"><Chip kind="bad">Dead</Chip></td>
+            {d.at.map(v => v ? <td class="fin-c">{fmtM(v)}</td> : <td class="fin-c none" />)}<td /></tr>)}
         </tbody>
         <tfoot>
           <tr><th class="l" colSpan={4}>Committed</th>{committed.map(v => <th>{fmtM(v)}</th>)}<th /></tr>
@@ -105,6 +117,13 @@ export function Finances() {
         <div class="li"><span>Rookies</span><b>{R.rookieScale ? 'First-round scale, four seasons' : 'Negotiated by draft slot'}</b></div>
         {R.hasCap && <div class="li"><span>Trades over the cap</span><b>Take back up to {R.season >= 2023 ? '125% (110% over the 1st apron, 100% over the 2nd)' : '125%'} of outgoing salary</b></div>}
         <div class="li"><span>Longest contract</span><b>{R.maxYearsOwn} seasons (own player) · {R.maxYearsOther} (others)</b></div>
+        <div class="li"><span>Annual raises</span><b>{cs >= 1999 ? `Up to ${(maxRaise(cs, true) * 100).toFixed(1)}% with Bird rights, ${(maxRaise(cs, false) * 100).toFixed(1)}% otherwise` : 'No CBA limit yet'}</b></div>
+        {R.hasCap && <div class="li"><span>Re-signing rights</span><b>{cs >= 1999 ? 'Full Bird after 3 seasons, Early Bird after 2, Non-Bird after 1' : 'Bird rights after 3 seasons with the team'}</b></div>}
+        <div class="li"><span>Extensions</span><b>{cs >= 1995 ? 'Rookie scale in its final season; veterans with 2 or fewer left' : 'Veterans with 2 or fewer seasons left'}{cs >= 2011 ? `, up to ${cs >= 2023 ? 40 : 20}% raise` : ''}</b></div>
+        {cs >= 2017 && <div class="li"><span>Supermax</span><b>35% for designated veterans (7-9 seasons, MVP / All-NBA / DPOY)</b></div>}
+        <div class="li"><span>Roster</span><b>{RR.label}</b></div>
+        <div class="li"><span>Trade deadline</span><b>{tradeDeadline(w.season.phase === 'draft' || w.season.phase === 'freeagency' ? cs : w.season.year)}</b></div>
+        {canStretch(cs) && <div class="li"><span>Stretch provision</span><b>Waived salary can be spread over 2n+1 seasons</b></div>}
       </Panel>
       {hist.length > 0 && <Panel title="Luxury tax paid">{hist.map(([y, v]) => <div class="li"><span>{seasonLabel(+y)}</span><b class="bad">{fmtM(v)}</b></div>)}</Panel>}
       <Panel title="Plan ahead">

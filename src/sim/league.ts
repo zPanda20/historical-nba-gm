@@ -6,6 +6,7 @@ import { playerValue } from './coach';
 import { addEvent, addMessage, addNews, buildSchedule, initScouting, potentialOvr, projectedWins, teamStrength } from './world';
 import { eraRules, salaryScale, setEraYear, $y } from './history';
 import { arcDev, hypeOf } from './impact';
+import { makeContract } from './contracts';
 import { assessLuxuryTax, capRules, rookieScale, teamPayroll, fmtM, minSalary, yos } from './cap';
 const minSalaryFor = (season: number, p: Player) => minSalary(season, yos(p));
 import { applyAlignment, applyIdentityEvents, coachingCarousel, compactRetired, generateSchedule, injectClass, injectUndrafted, rollPicks, runExpansion } from './seasons';
@@ -552,8 +553,11 @@ export function makePick(world: World, pid: string) {
     // 1995 on: the rookie scale (four seasons for first-rounders); before that, slot-based negotiated deals
     const scale = rookieScale(world.season.year + 1, slot.pick, slot.round);
     const sal = scale ? scale.salary : slot.round === 1 ? $y(Math.max(40000, 150000 - slot.pick * 3500)) : $y(45000);
-    p.contract = { salary: sal, years: scale ? scale.years : slot.round === 1 ? 3 : 2, known: null, provenance: scale ? 'Rookie scale (simulated)' : 'RECONSTRUCTED — simulation only (rookie deal)', rookie: true, signed: world.season.day };
-    (p.contract as any).fresh = true;
+    const yrs = scale ? scale.years : slot.round === 1 ? 3 : 2;
+    // first-round scale deals: two guaranteed seasons, then team options on the third and fourth
+    p.contract = makeContract(sal, yrs, { rookie: true, scale: !!scale && slot.round === 1, fresh: true, signed: world.season.day,
+      opts: scale && slot.round === 1 ? [{ kind: 'team', idx: 2 }, { kind: 'team', idx: 3 }] : [],
+      provenance: scale ? 'Rookie scale (simulated)' : 'RECONSTRUCTED — simulation only (rookie deal)' });
   } else {
     p.rosterStatus = `Draft rights held by ${slot.team}`;
     if (!world.freeAgents.includes(pid)) world.freeAgents.push(pid);
@@ -664,6 +668,8 @@ export function startNextSeason(world: World) {
   const historical = sched && Object.keys(world.teams).length === 22 ? buildSchedule(year, sched, world.teams, { NJN: 'NYN' }) : null;
   world.season = { year, phase: 'preseason', day: addDays(R.start, -6), games: historical && historical.length > 800 ? historical : generateSchedule(world, year), playoffs: null, draft: null };
   rollPicks(world);
+  delete (world as any).fa;
+  for (const id of world.freeAgents) { const p = world.players[id]; if (p) { delete (p as any).rfa; delete (p as any).bird; delete (p as any).renounced; } }
   // whoever is still unsigned when camp opens lowers his price; by midseason most take what is offered
   for (const id of world.freeAgents) { const p = world.players[id]; if (p && p.ask) p.ask = Math.max(minSalaryFor(year, p), Math.round(p.ask * 0.55 / 5000) * 5000); }
   injectClass(world, year + 1);

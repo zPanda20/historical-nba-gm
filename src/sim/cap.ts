@@ -4,8 +4,10 @@
 import type { Player, Team, World } from './types';
 import { capFor } from './history';
 import { clamp } from './rng';
+import { salaryAt, birdLevel, birdLimit, maxFor, extensionCheck, stretchTerms, twoWaySalary, BIRD_LABEL } from './contracts';
+import { rules, hasRosterSpot, twoWayEligible } from './rules';
 
-export interface DeadMoney { pid: string; name: string; salary: number; years: number }
+export interface DeadMoney { pid: string; name: string; salary: number; years: number; from?: number }
 type TeamFin = Team & { dead?: DeadMoney[]; mleUsed?: number; taxPaid?: Record<string, number> };
 const fin = (t: Team) => t as TeamFin;
 
@@ -74,19 +76,25 @@ export function rookieScale(season: number, pick: number, round: number): { sala
   return { salary: Math.round(cap * (0.016 + 0.068 * Math.exp(-(pick - 1) / 7)) / 1000) * 1000, years: 4 };
 }
 
-/** Salary on a team's books `ahead` seasons from the cap season (0 = this one), dead money included. */
+/** Salary on a team's books `ahead` seasons from the cap season (0 = this one), dead money included; two-way deals do not count. */
 export function teamPayroll(w: World, tid: string, ahead = 0): number {
   const t = w.teams[tid];
   let s = 0;
-  for (const id of t.roster) { const c = w.players[id]?.contract; if (c && c.years > ahead) s += c.salary; }
-  for (const d of fin(t).dead ?? []) if (d.years > ahead) s += d.salary;
+  for (const id of t.roster) { const c = w.players[id]?.contract; if (c && !c.twoWay && c.years > ahead) s += salaryAt(c, ahead); }
+  for (const d of fin(t).dead ?? []) if (d.years > ahead && ((d as any).from ?? 0) <= ahead) s += d.salary;
   return s;
 }
-/** Cap holds for our own unsigned free agents (renounce by letting them go). */
+/** Our own unsigned free agents (Bird rights still held) carry a cap hold until they sign or are renounced. */
+export function holdPlayers(w: World, tid: string): Player[] {
+  const out: Player[] = [];
+  for (const id of w.freeAgents) { const p = w.players[id]; if (p && (p as any).bird === tid && !p.retired && (p as any).renounced !== tid) out.push(p); }
+  for (const id of w.teams[tid].roster) { const p = w.players[id]; if (p && (!p.contract || p.contract.years <= 0)) out.push(p); }
+  return out;
+}
+export const capHold = (w: World, p: Player) => Math.round(((p as any).prevSalary ?? p.contract?.salary ?? minSalary(capSeason(w), yos(p))) * ((p as any).rfa ? 1.25 : 1.3) / 1000) * 1000;
 export function capHolds(w: World, tid: string): number {
-  if (!capRules(capSeason(w)).hasCap) return 0;
-  return w.teams[tid].roster.map(id => w.players[id]).filter(p => p && (!p.contract || p.contract.years <= 0))
-    .reduce((s, p) => s + Math.round((p.contract?.salary ?? minSalary(capSeason(w), yos(p))) * 1.3), 0);
+  if (!capRules(capSeason(w)).hasCap || w.season.phase !== 'freeagency' && w.season.phase !== 'draft') return 0;
+  return holdPlayers(w, tid).reduce((s, p) => s + capHold(w, p), 0);
 }
 export function capRoom(w: World, tid: string): number {
   const R = capRules(capSeason(w));
@@ -109,45 +117,66 @@ export function isRepeater(w: World, tid: string, season: number): boolean {
   return [1, 2, 3, 4].filter(k => (paid[season - k] ?? 0) > 0).length >= 3;
 }
 
-export type SignVia = 'room' | 'bird' | 'rookie' | 'mle' | 'tpmle' | 'roomexc' | 'exception' | 'min' | 'budget';
-export interface SignCheck { ok: boolean; via?: SignVia; reason?: string; most?: number }
+export type SignVia = 'room' | 'bird' | 'rookie' | 'mle' | 'tpmle' | 'roomexc' | 'exception' | 'min' | 'budget' | 'extension' | 'twoway';
+export interface SignCheck { ok: boolean; via?: SignVia; reason?: string; most?: number; note?: string }
+export interface SignOpts { twoWay?: boolean; earmark?: number; skipRoster?: boolean }
 
 /** Can `tid` sign `p` at this salary and length under this season's rules (and, before the cap, the owner's budget)? */
-export function signingCheck(w: World, tid: string, p: Player, salary: number, years: number): SignCheck {
+export function signingCheck(w: World, tid: string, p: Player, salary: number, years: number, o: SignOpts = {}): SignCheck {
   const season = capSeason(w);
   const R = capRules(season);
   const t = w.teams[tid];
   const y = yos(p);
-  const own = p.team === tid || (p as any).bird === tid;
-  const mx = maxSalary(season, y, own ? p.contract?.salary ?? 0 : 0);
+  // two-way contracts sit outside the cap and the 15
+  if (o.twoWay) {
+    if (!twoWayEligible(w, p, y)) return { ok: false, reason: rules(w).twoWay ? 'Two-way contracts are for players with four or fewer seasons of service.' : 'Two-way contracts begin in 2017-18.' };
+    if (p.team !== tid && !o.skipRoster && !hasRosterSpot(w, tid, true)) return { ok: false, reason: `All ${rules(w).twoWay} two-way slots are taken.` };
+    if (years > 2) return { ok: false, reason: 'Two-way contracts run one or two seasons.' };
+    return { ok: true, via: 'twoway', most: twoWaySalary(season) };
+  }
+  // extending a player already under contract with us
+  if (p.team === tid && p.contract && p.contract.years > 0 && !p.contract.twoWay) {
+    const e = extensionCheck(w, p, tid, salary, years);
+    return e.ok ? { ok: true, via: 'extension' } : { ok: false, reason: e.reason, most: e.most };
+  }
+  const own = (p as any).bird === tid || p.team === tid;
+  const mx = maxFor(p, tid, season);
   const mn = minSalary(season, y);
-  if (mx && salary > mx) return { ok: false, reason: `The maximum he can be paid is ${fmtM(mx)} (${y >= 10 ? 35 : y >= 7 ? 30 : 25}% of the cap).`, most: mx };
+  if (mx && salary > mx) return { ok: false, reason: `The maximum he can be paid is ${fmtM(mx)}.`, most: mx };
   if (salary < mn) return { ok: false, reason: `The league minimum for a player with ${y} season${y === 1 ? '' : 's'} is ${fmtM(mn)}.`, most: mn };
   const maxYears = own ? R.maxYearsOwn : R.maxYearsOther;
   if (years > maxYears) return { ok: false, reason: `Contracts can run at most ${maxYears} seasons${own ? '' : ' with a new team'}.` };
+  if (p.team !== tid && !o.skipRoster && !hasRosterSpot(w, tid)) return { ok: false, reason: `Roster is full (${rules(w).label}).` };
   const isMin = salary <= mn * 1.001 && years <= 2;
   const rights = p.rosterStatus?.startsWith('Draft rights held by') && p.draftedBy === tid;
-  const payNow = teamPayroll(w, tid) - (own && p.contract && p.contract.years > 0 ? p.contract.salary : 0);
+  const payNow = teamPayroll(w, tid) - (p.team === tid && p.contract && p.contract.years > 0 ? p.contract.salary : 0) + (o.earmark ?? 0);
   if (rights && R.hasCap) return { ok: true, via: 'rookie' };
   if (!R.hasCap) {
     const budget = tid === w.meta.userTeam ? w.owner.budget : t.payrollBudget ?? Infinity;
-    if (isMin || payNow + salary <= budget * 1.001) return { ok: true, via: 'budget' };
+    if (isMin || own || payNow + salary <= budget * 1.001) return { ok: true, via: own ? 'bird' : 'budget' };
     return { ok: false, reason: `There is no salary cap yet, but the owner caps payroll at ${fmtM(budget)}. This deal would take it to ${fmtM(payNow + salary)}.`, most: Math.max(mn, budget - payNow) };
   }
-  if (p.rosterStatus?.startsWith('Draft rights held by') && p.draftedBy === tid) return { ok: true, via: 'rookie' };
-  if (own) return { ok: true, via: 'bird' };
-  const after = payNow + salary;
-  const room = Math.max(0, R.cap - payNow - capHolds(w, tid));
+  // our own free agent's hold is replaced by his salary, so it does not count against the room for him
+  const holds = capHolds(w, tid) - (own && (p as any).bird === tid ? capHold(w, p) : 0);
+  const room = Math.max(0, R.cap - payNow - holds);
+  const level = own ? birdLevel(p, tid, season) : null;
+  if (level) {
+    const lim = birdLimit(w, p, level, season);
+    if (lim == null || salary <= lim) return { ok: true, via: 'bird', note: BIRD_LABEL[level] };
+    if (salary <= room) return { ok: true, via: 'room' };
+    return { ok: false, reason: `${BIRD_LABEL[level]} (${level === 'early' ? 'two seasons with us' : 'one season with us'}) allow at most ${fmtM(lim)} over the cap.`, most: Math.max(lim, room) };
+  }
   if (salary <= room) return { ok: true, via: 'room' };
   if (isMin) return { ok: true, via: 'min' };
+  const after = payNow + salary;
   const used = fin(t).mleUsed === season;
   if (R.mle && !used && salary <= R.mle && years <= 4 && (!R.apron1 || after <= R.apron1)) return { ok: true, via: 'mle' };
   if (R.tpMle && !used && salary <= R.tpMle && years <= 3 && (!R.apron2 || after <= R.apron2)) return { ok: true, via: 'tpmle' };
   if (R.roomExc && !used && payNow <= R.cap && salary <= R.roomExc && years <= 2) return { ok: true, via: 'roomexc' };
   if (R.smallExc && !used && salary <= R.smallExc) return { ok: true, via: 'exception' };
   const best = Math.max(room, mn, !used ? Math.max(R.mle && (!R.apron1 || payNow + R.mle <= R.apron1) ? R.mle : 0, R.tpMle && (!R.apron2 || payNow + R.tpMle <= R.apron2) ? R.tpMle : 0, R.smallExc ?? 0) : 0);
-  const exc = R.mle ? (used ? ' Your mid-level exception is already used this season.' : ` The most an exception allows is ${fmtM(best)}.`) : R.smallExc ? (used ? ' The $1m exception is used.' : '') : '';
-  return { ok: false, reason: `Over the cap: ${room > 0 ? `only ${fmtM(room)} of room` : 'no cap room'}. You can offer the minimum (${fmtM(mn)})${exc} Your own players can be re-signed over the cap with Bird rights.`, most: best };
+  const exc = R.mle ? (used ? ' The mid-level exception is already used this season.' : ` The most an exception allows is ${fmtM(best)}.`) : R.smallExc ? (used ? ' The $1m exception is used.' : '') : '';
+  return { ok: false, reason: `Over the cap: ${room > 0 ? `only ${fmtM(room)} of room` : 'no cap room'}. You can offer the minimum (${fmtM(mn)}).${exc}`, most: best };
 }
 /** Record what a signing used (one mid-level-type exception per team per season). */
 export function noteSigning(w: World, tid: string, via: SignVia | undefined) {
@@ -175,14 +204,17 @@ export function tradeSalaryCheck(w: World, tid: string, outSal: number, inSal: n
 }
 
 /** Waived contracts stay on the books for the seasons left. */
-export function addDeadMoney(w: World, tid: string, p: Player) {
+export function addDeadMoney(w: World, tid: string, p: Player, stretch = false) {
   const c = p.contract;
-  if (!c || c.years <= 0) return;
-  (fin(w.teams[tid]).dead ??= []).push({ pid: p.id, name: p.name, salary: c.salary, years: c.years });
+  if (!c || c.years <= 0 || c.twoWay) return;
+  const dead = (fin(w.teams[tid]).dead ??= []);
+  if (stretch) { const st = stretchTerms(c); dead.push({ pid: p.id, name: `${p.name} (stretched)`, salary: st.salary, years: st.years }); return; }
+  // each remaining season stays on the books at its own salary
+  for (let k = 0; k < c.years; k++) dead.push({ pid: p.id, name: p.name, salary: salaryAt(c, k), years: k + 1, from: k } as any);
 }
 /** Offseason roll: dead money runs down a season. */
 export function rollDeadMoney(w: World) {
-  for (const t of Object.values(w.teams)) { const f = fin(t); if (f.dead) f.dead = f.dead.map(d => ({ ...d, years: d.years - 1 })).filter(d => d.years > 0); }
+  for (const t of Object.values(w.teams)) { const f = fin(t); if (f.dead) f.dead = f.dead.map(d => ({ ...d, years: d.years - 1, from: Math.max(0, ((d as any).from ?? 0) - 1) })).filter(d => d.years > 0); }
 }
 export const deadMoney = (t: Team) => fin(t).dead ?? [];
 export const taxHistory = (t: Team) => fin(t).taxPaid ?? {};

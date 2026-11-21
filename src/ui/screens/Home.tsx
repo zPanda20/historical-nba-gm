@@ -1,6 +1,8 @@
 // Courtside (Home), built on the approved 1976 mockup: arena stands and floor, the center-hung bulb scoreboard,
 // the "last night" broadcast chyron, the newspaper crawl, the starting five on the floor, and the decisions at the scorer's table.
 import { useStore, go, openModal, setUI, commit } from '../store';
+import { faActive } from '../../sim/market';
+import { faDays } from '../actions';
 import { Headshot, Btn, MONTHS, DAYS, seasonLabel, condWord, Logo, logoUrl } from '../util';
 import { Bracket } from '../Bracket';
 import { openRequest, needDef, needMetric } from '../../sim/needs';
@@ -203,8 +205,9 @@ function GameControls({ w }: { w: World }) {
     </>}
     {S.phase === 'draft' && <Btn kind="prim" onClick={() => go('draft')}>Go to the draft room</Btn>}
     {S.phase === 'freeagency' && <>
-      <Btn kind="prim" onClick={() => go('office', 'contracts')}>Re-sign players</Btn>
-      <Btn onClick={() => go('office', 'fa')}>Free agents</Btn>
+      <Btn kind="prim" onClick={() => go('office', 'fa')}>Free agency</Btn>
+      {faActive(w) && <Btn onClick={() => faDays(1)}>Next day of free agency</Btn>}
+      <Btn kind="ghost" onClick={() => go('finances')}>Cap sheet</Btn>
     </>}
     <Btn kind={allDelegated(w) ? 'prim' : 'ghost'} onClick={() => autopilot()}>Autopilot</Btn>
   </section>;

@@ -2,6 +2,7 @@
 // The SAME function resolves watched and fast-simmed games; `log` only controls text output.
 import type { BoxLine, BoxScore, Coach, GameEvent, Player, Team, World } from './types';
 import { injuryRisk } from './impact';
+import { twoWayCanPlay } from './rules';
 import { Rng, clamp, logit, sigmoid, stream, z } from './rng';
 import { Gameplan, makeGameplan, playerValue, POSITIONS, PosKey, posScore } from './coach';
 import { eraRules, eraStyle } from './history';
@@ -96,7 +97,7 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
     const team = world.teams[tid];
     const coach = world.coaches[team.coach];
     const plan = makeGameplan(world, team, coach);
-    let avail = team.roster.map(id => world.players[id]).filter(p => p && !(p.injury && p.injury.daysLeft > 0));
+    let avail = team.roster.map(id => world.players[id]).filter(p => p && !(p.injury && p.injury.daysLeft > 0) && twoWayCanPlay(world, p));
     // a decimated team still has to field five: the least-hurt players suit up
     if (avail.length < 5) avail = team.roster.map(id => world.players[id]).filter(Boolean).sort((a, b) => (a.injury?.daysLeft ?? 0) - (b.injury?.daysLeft ?? 0)).slice(0, Math.max(5, avail.length));
     const ps: PState[] = avail.map((p, i) => ({ p, slot: i, sec: 0, mis: 0, best: Math.max(...POSITIONS.map(q => posScore(p, q))), F: 0.04 + (100 - (p.cond ?? 100)) / 100 * 0.55 + (p.fatigueSeason ?? 0) * 0.08, fouls: 0, out: false, injured: false,

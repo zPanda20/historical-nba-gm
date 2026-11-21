@@ -972,3 +972,17 @@ ul.read li.bad::before { content: '×'; color: var(--danger); }
 .predraft p { margin: 0; font-size: 14.5px; line-height: 1.45; }
 /* black and navy logo art gets a thin light keyline so it reads on the dark wood */
 .logo.halo { filter: drop-shadow(0 0 .6px rgba(246, 236, 212, .95)) drop-shadow(0 0 .6px rgba(246, 236, 212, .95)) drop-shadow(0 2px 3px rgba(0, 0, 0, .55)); }
+
+/* ---------- pass 9: free agency market, contract terms ---------- */
+.sched { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.sched span { display: flex; flex-direction: column; padding: 5px 10px; border: 1px solid var(--edge); border-radius: 3px; background: rgba(0, 0, 0, .25); font: 600 14px var(--label); font-variant-numeric: tabular-nums; }
+.sched span i { font: 700 10px var(--label); font-style: normal; letter-spacing: 1px; color: var(--dim); }
+.sched span.opt { border-style: dashed; border-color: var(--ta); }
+.fa-bar .panel-b { padding-top: 6px; }
+.fa-line { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: baseline; color: var(--muted); }
+.fa-ours { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--ink); font-weight: 600; }
+.fin-tbl .fin-c.opt { box-shadow: inset 0 -2px 0 var(--ta); }
+.fin-tbl .fin-c sup { margin-left: 3px; font: 700 9px var(--label); letter-spacing: .5px; color: var(--ta); }
+.fin-tbl .fin-c.tw { color: var(--dim); }
+.fin-tbl tr.hold td { color: var(--muted); }
+.pm-fa { margin: 6px 0 10px; }

@@ -42,6 +42,7 @@ export function createWorld(data: any, opts: { userTeam: string; mode: 'career' 
     players[p.id] = { ...p, injury: null, stats: [], awards: [], morale: 60, fatigueSeason: 0 };
     players[p.id].ovr = Math.round(playerValue(players[p.id]));
     shapeCareer(players[p.id], 1976); shapeDraftOutlier(players[p.id]);
+    if (players[p.id].team) (players[p.id] as any).birdYears = 3; // established on their 1976 clubs
   }
   const coaches: Record<string, Coach> = {};
   for (const c of data.coaches as Coach[]) coaches[c.id] = { ...c, trustGM: 55 };
@@ -61,7 +62,7 @@ export function createWorld(data: any, opts: { userTeam: string; mode: 'career' 
     owner: { name: teams[opts.userTeam].owner, patience: 55, wantsWins: 60, budget: 0, satisfaction: 60, expectedWins: 41, objective: '' },
     clock: 'Contending', gmRep: 50, scoutBudget: 2, log: { seq: 0 }, tradeHistory: [], promises: [],
   };
-  (world as any).impactVersion = 1; // created with career shapes and current scouting
+  (world as any).impactVersion = 1; (world as any).contractsVersion = 1; // created with career shapes and current scouting
   world.season.games = buildSchedule(1976, data.schedules['1976'], teams, {});
   if (useClasses) injectClass(world, 1977);
   // franchise clocks + owner expectations from projected strength

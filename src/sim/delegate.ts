@@ -1,5 +1,7 @@
 // Delegation: hand parts of the job to your staff. With everything delegated the franchise runs itself.
 import type { Player, World } from './types';
+import { maxRaise } from './contracts';
+import { rules as eraRoster, rosterCount } from './rules';
 import { bestOffer, capSeason, maxSalary, minSalary, yos } from './cap';
 import { $y } from './history';
 import { playerValue } from './coach';
@@ -17,7 +19,7 @@ export const DELEG: { key: DelegKey; label: string; who: string; desc: string }[
   { key: 'coachRequests', label: "Coach's requests", who: 'Assistant GM', desc: "Looks for free agents that answer what the coach asked for." },
   { key: 'scouting', label: 'Scouting trips', who: 'Director of scouting', desc: 'Uses every scouting trip on the prospects we know least about.' },
   { key: 'draft', label: 'Draft picks', who: 'Director of scouting', desc: 'Makes our picks straight off our board.' },
-  { key: 'offseason', label: 'Offseason & new season', who: 'Assistant GM', desc: 'Fills the roster to 12, trims extras and opens the next season.' },
+  { key: 'offseason', label: 'Offseason & new season', who: 'Assistant GM', desc: 'Fills the roster to the era\'s limit, trims extras and opens the next season.' },
 ];
 
 export function delegation(w: World): Record<DelegKey, boolean> {
@@ -37,16 +39,12 @@ const inSeason = (w: World) => ['preseason', 'regular', 'playoffs'].includes(w.s
 
 function tryResign(w: World, p: Player): boolean {
   const v = playerValue(p), age = p.age ?? 28;
-  const ask = Math.min(p.ask ?? marketSalary(p, capSeason(w)), maxSalary(capSeason(w), yos(p), p.contract?.salary ?? 0) ?? Infinity);
+  const ask = Math.min(p.ask ?? marketSalary(p, capSeason(w)), maxSalary(capSeason(w), yos(p), (p as any).prevSalary ?? p.contract?.salary ?? 0) ?? Infinity);
   const worth = (v >= 50 && age <= 31) || v >= 60;
   if (!worth || ask - (p.contract?.salary ?? 0) > budgetRoom(w) + $y(40000)) return false;
   const yrs = age <= 27 ? 3 : age <= 30 ? 2 : 1;
   for (const sal of [ask, Math.round(ask * 1.08 / 5000) * 5000]) {
-    if (playerAccepts(w, p, w.meta.userTeam, sal, yrs).ok) {
-      p.contract = { salary: sal, years: yrs + (w.season.phase === 'freeagency' ? 0 : p.contract?.years ?? 0), known: null, provenance: 'Signed in this save (simulated)', signed: w.season.day };
-      delete (p as any).bird;
-      return true;
-    }
+    if (playerAccepts(w, p, w.meta.userTeam, sal, yrs).ok && signPlayer(w, p.id, w.meta.userTeam, sal, yrs, { raise: maxRaise(capSeason(w), true) * 0.7 }).ok) return true;
   }
   return false;
 }
@@ -70,9 +68,9 @@ export function runDelegates(w: World) {
     const pid = m.actions!.find(a => a.cmd === 'extend')!.arg.pid;
     const p = w.players[pid];
     m.resolved = true; m.read = true;
-    if (!p || p.team !== u) continue;
+    if (!p || (p.team !== u && (p as any).bird !== u)) continue;
     if (tryResign(w, p)) log(w, 'Assistant GM', `re-signed ${p.name} (${fmt$(p.contract!.salary)} × ${p.contract!.years})`, true);
-    else if (w.season.phase === 'freeagency') { releasePlayer(w, p.id); p.rosterStatus = `Free agent (was ${t.abbr})`; log(w, 'Assistant GM', `let ${p.name} walk`, true); }
+    else if (w.season.phase === 'freeagency') { if (p.team === u) releasePlayer(w, p.id); else { (p as any).renounced = u; delete (p as any).bird; delete (p as any).rfa; } log(w, 'Assistant GM', `let ${p.name} walk`, true); }
     else log(w, 'Assistant GM', `passed on extending ${p.name} for now`);
   }
   // trades offered to us
@@ -89,7 +87,7 @@ export function runDelegates(w: World) {
   // keep the roster full in season
   if (D.freeAgency && inSeason(w)) {
     const healthy = t.roster.filter(id => !(w.players[id].injury && w.players[id].injury!.daysLeft > 5)).length;
-    if (t.roster.length < 12 && (t.roster.length < 11 || healthy < 10)) {
+    if (rosterCount(w, u) < eraRoster(w).max && (rosterCount(w, u) < eraRoster(w).max - 1 || healthy < 10)) {
       const p = bestFreeAgent(w, budgetRoom(w));
       if (p) { const sal = Math.min(p.ask ?? marketSalary(p, capSeason(w)), bestOffer(w, u, p, 2)) || minSalary(capSeason(w), yos(p)); if (playerAccepts(w, p, u, sal, 1).ok) { if (signPlayer(w, p.id, u, sal, 1).ok) log(w, 'Assistant GM', `signed ${p.name} to fill a roster spot (${fmt$(sal)})`, true); } }
     }
@@ -101,15 +99,15 @@ export function runDelegates(w: World) {
     (w as any).lastReqTry = wk;
     const now = needMetric(w, t.roster, req.key);
     const worst = t.roster.map(id => w.players[id]).filter(p => !p.injury).sort((a, b) => playerValue(a) - playerValue(b))[0];
-    const room = budgetRoom(w) + (t.roster.length >= 12 && worst ? (worst.contract?.salary ?? 0) * 0.5 : 0);
+    const room = budgetRoom(w) + (rosterCount(w, u) >= eraRoster(w).max && worst ? (worst.contract?.salary ?? 0) * 0.5 : 0);
     const cands = w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && rightsOk(p, u) && (p.ask ?? marketSalary(p)) <= Math.max($y(40000), room));
     let best: Player | null = null, bestM = now + 0.75;
-    for (const p of cands) { const after = t.roster.length >= 12 && worst ? [...t.roster.filter(id => id !== worst.id), p.id] : [...t.roster, p.id]; const m = needMetric(w, after, req.key); if (m > bestM) { bestM = m; best = p; } }
+    for (const p of cands) { const after = rosterCount(w, u) >= eraRoster(w).max && worst ? [...t.roster.filter(id => id !== worst.id), p.id] : [...t.roster, p.id]; const m = needMetric(w, after, req.key); if (m > bestM) { bestM = m; best = p; } }
     if (best) {
       const sal = Math.min(best.ask ?? marketSalary(best, capSeason(w)), bestOffer(w, u, best, 2)) || minSalary(capSeason(w), yos(best));
       if (playerAccepts(w, best, u, sal, 1).ok) {
-        if (t.roster.length >= 12 && worst) releasePlayer(w, worst.id);
-        if (signPlayer(w, best.id, u, sal, 1).ok) log(w, 'Assistant GM', `signed ${best.name} for the coach's request${t.roster.length >= 12 && worst ? ` (released ${worst.name})` : ''}`, true);
+        if (rosterCount(w, u) >= eraRoster(w).max && worst) releasePlayer(w, worst.id);
+        if (signPlayer(w, best.id, u, sal, 1).ok) log(w, 'Assistant GM', `signed ${best.name} for the coach's request${rosterCount(w, u) >= eraRoster(w).max && worst ? ` (released ${worst.name})` : ''}`, true);
       }
     }
   }
@@ -124,12 +122,13 @@ export function runDelegates(w: World) {
   if (D.inbox) for (const m of w.messages) if (!m.resolved && (!m.actions?.length || m.actions.every(a => a.cmd === 'dismiss'))) { m.resolved = true; m.read = true; }
 }
 
-/** Offseason roster work: sign to 12 within budget (draft rights first), trim to 12. */
+/** Offseason roster work: sign up to the era's roster limit within budget (draft rights first), trim the extras. */
 export function offseasonRoster(w: World) {
   const u = w.meta.userTeam, t = w.teams[u];
   let guard = 0;
   const skip = new Set<string>();
-  while (t.roster.filter(id => (w.players[id].contract?.years ?? 0) > 0).length < 12 && guard++ < 25) {
+  const target = eraRoster(w).max >= 15 ? 14 : 12;
+  while (rosterCount(w, u) < target && guard++ < 25) {
     const p = bestFreeAgent(w, budgetRoom(w), x => !skip.has(x.id));
     if (!p) break;
     const sal = Math.min(p.ask ?? marketSalary(p, capSeason(w)), bestOffer(w, u, p, 2)) || minSalary(capSeason(w), yos(p));
@@ -140,12 +139,12 @@ export function offseasonRoster(w: World) {
   const mn = (p: Player) => minSalary(capSeason(w), yos(p));
   const late = w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && rightsOk(p, u) && (p.ask ?? marketSalary(p)) <= mn(p) * 2.5).sort((a, b) => playerValue(b) - playerValue(a));
   for (const p of late) {
-    if (t.roster.filter(id => (w.players[id].contract?.years ?? 0) > 0).length >= 12) break;
+    if (rosterCount(w, u) >= target) break;
     if (signPlayer(w, p.id, u, mn(p), 1).ok) log(w, 'Assistant GM', `signed ${p.name} to a minimum deal`);
   }
-  const signed = () => t.roster.filter(id => (w.players[id].contract?.years ?? 0) > 0);
-  while (signed().length > 12) {
+  const signed = () => t.roster.filter(id => (w.players[id].contract?.years ?? 0) > 0 && !w.players[id].contract?.twoWay);
+  while (signed().length > eraRoster(w).max) {
     const worst = signed().map(id => w.players[id]).sort((a, b) => playerValue(a) - playerValue(b))[0];
-    releasePlayer(w, worst.id); log(w, 'Assistant GM', `released ${worst.name} to get to 12`);
+    releasePlayer(w, worst.id); log(w, 'Assistant GM', `released ${worst.name} to get to the roster limit`);
   }
 }
