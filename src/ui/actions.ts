@@ -6,6 +6,7 @@ import { exerciseOption, declineOption, resolveSheet, withdrawOffer, faAdvanceDa
 import { rosterRules } from '../sim/rules';
 import { migrateSave } from '../sim/impact';
 import { makePromise, mediate, migratePeople, refuseRequest } from '../sim/people';
+import { crisis } from '../sim/dynasty';
 import { potentialOvr } from '../sim/world';
 import { createWorld, addMessage, addEvent } from '../sim/world';
 import { advanceDay, addDays, runDraftUntilUser, makePick, startNextSeason, projectedWinsCache, nextUnplayedDate } from '../sim/league';
@@ -263,6 +264,11 @@ export function runCommand(m: Message, a: { label: string; cmd: string; arg?: an
     case 'patience': { const t = makePromise(w, a.arg.pid, 'role review'); resolve(); toast(t); break; }
     case 'promise': { const t = makePromise(w, a.arg.pid, a.arg.kind); resolve(); openModal('notice', { title: 'Promise made', body: t }); commit(); return; }
     case 'mediate': { const t = mediate(w, a.arg.a, a.arg.b, a.arg.how); resolve(); openModal('notice', { title: a.arg.how === 'gm' ? 'The meeting' : a.arg.how === 'coach' ? 'The coach handles it' : 'You stay out of it', body: t }); commit(); return; }
+    case 'crisis': {
+      const t = crisis(w, a.arg.n, a.arg.i, a.arg.how, a.arg.who); resolve();
+      if (a.arg.how === 'shop' && !/leaked/.test(t)) { setUI({ tradeDraft: { other: Object.keys(w.teams).find(x => x !== w.meta.userTeam)!, give: [a.arg.who], get: [], givePicks: [], getPicks: [] } }); go('office', 'trade'); }
+      openModal('notice', { title: 'How it played out', body: t }); commit(); return;
+    }
     case 'refuseRequest': { const t = refuseRequest(w, a.arg.pid); resolve(); toast(t); break; }
     case 'sandbox': { w.meta.mode = 'sandbox'; w.meta.fired = false; resolve(); toast('Continuing in sandbox mode.'); break; }
     default: resolve();

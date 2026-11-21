@@ -1,4 +1,5 @@
 // GM layer: front-office commands, AI GM behaviour, owner, agents, coach requests (GDD §8, §11, §12, §15).
+import { plansFor, strainOf } from './dynasty';
 import type { ClockState, Player, Team, World } from './types';
 import { doSignTrade } from './signtrade';
 import { rules as eraRoster, rosterCount } from './rules';
@@ -344,7 +345,9 @@ function optionDue(w: World, p: Player, kind: 'player' | 'team') {
   const market = marketSalary(p, season);
   const t = w.teams[p.team!];
   if (kind === 'player') {
-    const out = market > c.salary * 1.12 && (p.age ?? 30) < 33;
+    const st = strainOf(w, p);
+    // a star who feels it is not his team tests the market even when the money is close (GDD §13)
+    const out = (p.age ?? 30) < 33 && (market > c.salary * 1.12 || (st.strain + st.griev >= 70 && market >= c.salary * 0.9) || plansFor(w, p.id).length > 0);
     if (out) { declineOption(w, p.id); if (t.id === w.meta.userTeam) addMessage(w, { date: w.season.day, from: `Agent for ${p.name}`, role: 'Agent', subject: `${p.name} opts out`, body: `He declined his ${fmt$(c.salary)} player option to test free agency. We keep his Bird rights.`, urgent: 2, tag: 'Agent', actions: [{ label: 'Make an offer', cmd: 'extend', arg: { pid: p.id } }] }); }
     else { exerciseOption(w, p.id); if (t.id === w.meta.userTeam) addMessage(w, { date: w.season.day, from: `Agent for ${p.name}`, role: 'Agent', subject: `${p.name} picks up his option`, body: `He exercised his ${fmt$(c.salary)} player option for ${season}–${String(season + 1).slice(2)}.`, urgent: 0, tag: 'Agent' }); }
     return;

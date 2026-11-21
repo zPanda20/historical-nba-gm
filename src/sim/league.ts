@@ -7,6 +7,7 @@ import { addEvent, addMessage, addNews, buildSchedule, initScouting, potentialOv
 import { eraRules, salaryScale, setEraYear, $y } from './history';
 import { arcDev, hypeOf } from './impact';
 import { cultureDevMul, declineMul, mentality, peopleOffseason, peopleSeasonStart, peopleWeek } from './people';
+import { dynastyOffseason, dynastyWeek, settleSuperteams } from './dynasty';
 import { makeContract } from './contracts';
 import { assessLuxuryTax, capRules, rookieScale, teamPayroll, fmtM, minSalary, yos } from './cap';
 const minSalaryFor = (season: number, p: Player) => minSalary(season, yos(p));
@@ -117,7 +118,7 @@ export function advanceDay(world: World): string {
   }
   if (S.phase === 'regular') {
     if (S.day < (world.season.games[0]?.date ?? S.day)) { S.day = addDays(S.day, 1); healDay(world); return 'Off day'; }
-    if (isMonday(S.day)) peopleWeek(world);
+    if (isMonday(S.day)) { peopleWeek(world); dynastyWeek(world); }
     const today = S.games.filter(g => g.date === S.day && !g.played);
     for (const g of today) playGame(world, g);
     pruneGames(world);
@@ -132,7 +133,7 @@ export function advanceDay(world: World): string {
     return `${today.length} games played`;
   }
   if (S.phase === 'playoffs') {
-    if (isMonday(S.day)) peopleWeek(world);
+    if (isMonday(S.day)) { peopleWeek(world); dynastyWeek(world); }
     playoffDay(world);
     prunePlayoffLogs(world);
     healDay(world);
@@ -651,6 +652,8 @@ export function retirements(world: World) {
 export function startNextSeason(world: World) {
   const S = world.season;
   peopleOffseason(world);
+  settleSuperteams(world);
+  dynastyOffseason(world);
   developPlayers(world);
   retirements(world);
   coachingCarousel(world);

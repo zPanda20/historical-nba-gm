@@ -4,6 +4,7 @@ import { Panel, Chip, Headshot } from '../util';
 import { playerValue } from '../../sim/coach';
 import { culture, cultureBand, cultureSentence, isMonster, memoriesOf, mentalityWord, personaLabel, relationsOf, trustIn, trustWord } from '../../sim/people';
 import type { Player, World } from '../../sim/types';
+import { INDICATOR, dynOf, pressureWord, standingOf, teamPressure } from '../../sim/dynasty';
 
 const GAUGES: [key: 'std' | 'uni' | 'edge' | 'poise', label: string, help: string][] = [
   ['std', 'Standard', 'How hard the group works and how much it demands of itself'],
@@ -56,6 +57,7 @@ export function LockerRoom({ w }: { w: World }) {
     </Panel>
 
     <div class="lr-side">
+      <DynastyPanel w={w} />
       <Panel title="Bonds and fault lines">
         {!bonds.length && !cracks.length && !mentors.length && <p class="muted small">Nothing strong either way yet. Bonds form over time together.</p>}
         {mentors.map(([a, b]) => <div class="lr-pair"><b>{a.name}</b><span>is mentoring</span><b>{b.name}</b></div>)}
@@ -71,4 +73,26 @@ export function LockerRoom({ w }: { w: World }) {
       </Panel>}
     </div>
   </div>;
+}
+
+const EXP = (e: number) => e >= 1 ? 'Defending a title: anything less is failure.' : e >= 0.8 ? 'Title expectations.' : e >= 0.45 ? 'Playoff expectations.' : 'Low expectations.';
+function DynastyPanel({ w }: { w: World }) {
+  const t = w.teams[w.meta.userTeam];
+  const D = dynOf(t);
+  const pairs = Object.values(D.pairs).filter(p => w.players[p.n] && w.players[p.i]).sort((a, b) => b.strain - a.strain).slice(0, 2);
+  if (!pairs.length && D.exp < 0.8 && !D.log.length) return null;
+  const pr = teamPressure(t);
+  const open = (id: string) => openModal('player', { id });
+  return <Panel class="lr-dyn" title="Dynasty pressure" right={<span class={`lr-pw ${pr >= 65 ? 'hot' : pr >= 45 ? 'warm' : ''}`}>{pressureWord(pr)}</span>}>
+    <p class="muted small">{EXP(D.exp)}</p>
+    {!pairs.length && <p class="muted small">No clash at the top right now. It usually starts when a new star arrives and starts taking over a team someone else built.</p>}
+    {pairs.map(P => { const N = w.players[P.n], I = w.players[P.i]; const sN = standingOf(w, N), sI = standingOf(w, I);
+      return <div class="lr-dp">
+        <div class="lr-dpn"><button data-nav onClick={() => open(N.id)}><b>{N.name}</b><small>{sN?.label}</small></button><span>and</span><button data-nav onClick={() => open(I.id)}><b>{I.name}</b><small>{sI?.label}</small></button></div>
+        <div class="lr-g"><span>Strain</span><div class="lr-bar"><i style={{ width: `${P.strain}%` }} /></div><em>{pressureWord(P.strain)}</em></div>
+        <div class="lr-inds">{P.inds.filter(x => x !== 'leadership').slice(0, 4).map(x => <Chip>{INDICATOR[x]}</Chip>)}</div>
+        {P.griev >= 15 && <div class="small bad">Old grievances are building. Winning keeps them quiet; it doesn't make them go away.</div>}
+      </div>; })}
+    {D.log.slice(0, 3).map(l => <div class="lr-mem">{l.d.slice(5).replace('-', '/')} · {l.t}</div>)}
+  </Panel>;
 }

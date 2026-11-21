@@ -8,6 +8,7 @@ import { commit, toast } from '../store';
 import { potentialOvr } from '../../sim/world';
 import type { Player, World } from '../../sim/types';
 import { LockerRoom } from './Locker';
+import { rosterCount, rosterRules } from '../../sim/rules';
 
 export function moraleWord(m: number) { return m >= 75 ? 'Happy' : m >= 55 ? 'Content' : m >= 35 ? 'Restless' : 'Unhappy'; }
 
@@ -34,7 +35,7 @@ export function Roster() {
   const open = (p: Player) => openModal('player', { id: p.id });
   return <div class="screen">
     <div class="screen-h"><h2>Roster & development</h2><Tabs id="roster" def="roster" tabs={[{ id: 'roster', label: 'Roster' }, { id: 'depth', label: 'Depth chart' }, { id: 'stats', label: 'Season stats' }, { id: 'dev', label: 'Development' }, { id: 'locker', label: 'Locker room' }]} />
-      <div class="screen-meta">{t.roster.length} of 12 spots · payroll {fmt$(payroll(w!, t.id))}</div></div>
+      <div class="screen-meta">{rosterCount(w!, t.id)} of {rosterRules(w!.season.year).max} spots · payroll {fmt$(payroll(w!, t.id))}</div></div>
     {tab === 'roster' && <Panel class="fill">
       <SortTable id="roster" rows={ps} onRow={open} def="ovr:d" cols={[
         { key: 'name', label: 'Player', cls: 'l', get: p => p.name, desc: false, render: p => <PlayerTile p={p} size={38} sub={<>{positionsOf(p).map(x => x.pos).join('/')} · {ht(p.hgt)}</>} /> },

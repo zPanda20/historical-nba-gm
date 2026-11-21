@@ -2,6 +2,7 @@
 // interested team, players choosing between them (money, years, a winner, a role, loyalty), qualifying offers and offer
 // sheets for restricted free agents, and the late-summer scramble for minimum deals and two-way spots.
 import { cultureAppeal, motive } from './people';
+import { awaitingPlan, dynastyAppeal, planTargets } from './dynasty';
 import type { ContractOption, Player, Team, World } from './types';
 import { aiSignAndTrades } from './signtrade';
 import { clamp, stream } from './rng';
@@ -84,7 +85,7 @@ export function offerUtility(w: World, p: Player, o: FAOffer): number {
   if ((p as any).bird === o.team) u += 0.05 + ((p.traits.loyalty ?? 50) - 50) / 400;
   if (o.twoWay) u -= 0.05;
   u += (proj - 0.5) * 0.5 * Math.min(1, Math.max(0, motive(p, 'rings') - 1 / 12) * 6) * 0.15; // a man who lives for titles weighs the roster more
-  u += cultureAppeal(w, p, o.team);
+  u += cultureAppeal(w, p, o.team) + dynastyAppeal(w, p, o.team);
   return u + stream(w.meta.seed, 'fa-taste', faState(w).year, p.id, o.team).normal(0, 0.03);
 }
 
@@ -115,6 +116,7 @@ function decide(w: World, p: Player, log: string[]) {
   const F = faState(w);
   const os = offersFor(w, p.id);
   if (!os.length) return;
+  if (F.day < F.len - 6 && awaitingPlan(w, p, os)) { F.decideAt[p.id] = F.day + 2; return; }
   const ranked = os.map(o => ({ o, u: offerUtility(w, p, o) })).sort((a, b) => b.u - a.u);
   const elapsed = F.day - moratoriumEnd(capSeason(w));
   const bar = -0.12 - Math.max(0, elapsed) * 0.012;                          // he gets less picky as July wears on
@@ -190,6 +192,14 @@ function aiOffers(w: World, log: string[]) {
         makeOffer(w, t.id, p, { first: Math.max(minSalary(season, yos(p)), ask), years: Math.min(yrs, R.maxYearsOwn), raise: maxRaise(season, true) * 0.75 });
       } else (p as any).renounced = t.id; // renounced: frees the cap hold
     }
+    // a team-up aimed at this team: they will clear what it takes to make real offers (players take less to be together)
+    for (const id of planTargets(w, t.id)) {
+      const p = w.players[id];
+      if (!p || !w.freeAgents.includes(id) || ourOffer(w, id, t.id) || F.sheets[id]) continue;
+      const ask = p.ask ?? 0, chk = signingCheck(w, t.id, p, ask, 4, { earmark: earmarked(w, t.id, id) });
+      const first = chk.ok ? ask : Math.max(chk.most ?? 0, 0);
+      if (first >= ask * 0.5 && first > minSalary(season, yos(p))) makeOffer(w, t.id, p, { first, years: Math.min(4, R.maxYearsOther ?? 4), raise: maxRaise(season, false) * 0.6 });
+    }
     if (budget <= 0) continue;
     const line = aiSpendLine(w, t);
     let made = 0;
@@ -258,16 +268,26 @@ export function closeFreeAgency(w: World, log: string[] = []) {
   const holdout = (p: Player) => playerValue(p) >= 66 || askOf(p) > minSalary(season, yos(p)) * 2.2;
   for (const p of pool(w).filter(x => holdout(x) && !(x.rosterStatus ?? '').startsWith('Draft rights held by')).sort((a, b) => playerValue(b) - playerValue(a))) {
     const ask = askOf(p), years = (p.age ?? 27) >= 31 ? 1 : 2;
-    let best: FAOffer | null = null, bu = -9;
-    for (const t of Object.values(w.teams)) {
-      if (t.id === w.meta.userTeam || rosterCount(w, t.id) >= rules(w).max) continue;
-      const most = Math.min(bestOffer(w, t.id, p, years), aiSpendLine(w, t) - teamPayroll(w, t.id));
-      if (most < ask * 0.62) continue;
+    let best: FAOffer | null = null, bu = -9, bestCut: Player | null = null;
+    for (const pass of [0, 1]) for (const t of Object.values(w.teams)) {
+      if (best && pass === 1) break;
+      if (t.id === w.meta.userTeam) continue;
+      // a full roster waives its fifteenth man for a player this much better
+      let cut: Player | null = null;
+      if (rosterCount(w, t.id) >= rules(w).max) {
+        cut = t.roster.map(id => w.players[id]).filter(x => x && !x.contract?.twoWay && (x.contract?.salary ?? 0) <= minSalary(season, yos(x)) * 2 && playerValue(x) < playerValue(p) - 12).sort((a, b) => playerValue(a) - playerValue(b))[0] ?? null;
+        if (!cut) continue;
+      }
+      // a good player nobody has room for takes what a team can still do (an exception, a short deal) rather than sit out
+      const R = capRules(season);
+      const ceiling = Math.max(aiSpendLine(w, t), R.tax ? R.tax * 1.02 : R.cap * 1.25) - teamPayroll(w, t.id);
+      const most = pass === 0 ? Math.min(bestOffer(w, t.id, p, years), ceiling) : bestOffer(w, t.id, p, years); // second pass: contenders pay the tax for a player this good
+      if (most < minSalary(season, yos(p)) * 1.5 || (pass === 0 && most < ask * 0.3) || (pass === 1 && playerValue(p) < 70)) continue;
       const o: FAOffer = { team: t.id, first: Math.round(Math.min(most, ask * 0.85) / 5000) * 5000, years, raise: 0, day: F.day };
       const u = offerUtility(w, p, o);
-      if (u > bu) { bu = u; best = o; }
+      if (u > bu) { bu = u; best = o; bestCut = cut; }
     }
-    if (best) finalize(w, p, best);
+    if (best) { if (bestCut) releaseToPool(w, bestCut); if (!finalize(w, p, best) && bestCut) { /* cut stays cut: a camp body */ } }
     else p.ask = Math.max(minSalary(season, yos(p)), Math.round(ask * 0.8 / 5000) * 5000);
   }
   for (const t of Object.values(w.teams)) {

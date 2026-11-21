@@ -3,6 +3,7 @@
 import type { BoxLine, BoxScore, Coach, GameEvent, Player, Team, World } from './types';
 import { injuryRisk } from './impact';
 import { closerPull, cohesion, composure, injuryMul } from './people';
+import { cooperation, feudLevel } from './dynasty';
 import { twoWayCanPlay } from './rules';
 import { Rng, clamp, logit, sigmoid, stream, z } from './rng';
 import { Gameplan, makeGameplan, playerValue, POSITIONS, PosKey, posScore } from './coach';
@@ -59,7 +60,7 @@ const SHOT_MIX: Record<string, [ShotType, number][]> = {
 const ASSIST_P: Record<string, number> = { post: 0.44, iso: 0.12, motion: 0.84, high: 0.7, pnr: 0.62, spot: 0.9, trans: 0.6, putback: 0.0 };
 
 interface PState { p: Player; slot: number; sec: number; F: number; fouls: number; out: boolean; injured: boolean; line: BoxLine; pos?: PosKey; mis: number; best: number; }
-interface Side { team: Team; coach: Coach; plan: Gameplan; ps: PState[]; on: PState[]; teamFouls: number; score: number; qScore: number[]; coh: number; }
+interface Side { team: Team; coach: Coach; plan: Gameplan; ps: PState[]; on: PState[]; teamFouls: number; score: number; qScore: number[]; coh: number; feud: number; }
 
 export interface GameResult { hs: number; as: number; ot: number; box: BoxScore; log: GameEvent[]; injuries: { pid: string; days: number; type: string }[]; minutes: Record<string, number>; }
 
@@ -106,7 +107,7 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
     const on = plan.starters.map(id => ps.find(x => x.p.id === id)!).filter(Boolean);
     for (const x of ps) if (on.length < 5 && !on.includes(x)) on.push(x);
     on.forEach(x => (x.line.gs = true));
-    const sd: Side = { team, coach, plan, ps, on, teamFouls: 0, score: 0, qScore: [], coh: cohesion(team) };
+    const sd: Side = { team, coach, plan, ps, on, teamFouls: 0, score: 0, qScore: [], coh: cohesion(team), feud: feudLevel(world, on.map(x => x.p)) };
     for (const x of on) x.pos = (plan.slots?.[x.p.id] as PosKey) ?? undefined;
     assignSlots(sd, []);
     return sd;
@@ -146,6 +147,8 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
   // effective rating re-centred on the league so z(eff) = 0 for an average rotation player
   const eff = (x: PState, k: keyof Player['r']) => 55 + (x.p.r[k] - C[k]) * CAL.spread - 30 * Math.max(0, x.F - 0.3) - x.mis;
   const homeEdge = (team: number) => (opts.neutral ? 0 : team === 0 ? 1 : -1);
+  const coopCache = new Map<string, number>();
+  const coop = (a: Player, b: Player) => { const k = a.id + '>' + b.id; let v = coopCache.get(k); if (v === undefined) { v = cooperation(world, a, b); coopCache.set(k, v); } return v; };
   // lineup structure: who can bring the ball up, how many shooters space the floor, how many slow bigs share it
   const lineup = (sd: Side) => {
     let bh = -9, sp = 0, bigs = 0;
@@ -335,7 +338,7 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
 
     // turnover (competing branch, F4)
     const ballZ = (z(eff(actor, 'handle')) * 0.6 + z(eff(actor, 'iq')) * 0.25 + z(eff(actor, 'pass')) * 0.15);
-    const pTO = clamp(sigmoid(logit(CAL.tov[action] ?? 0.14) + tovE - 0.22 * ballZ + 0.15 * z(eff(def, 'stl')) + (press - 0.55) * 0.6 + 0.25 * Math.max(0, actor.F - 0.4) + 0.55 * mO * Math.max(0, 0.25 - LO.bh) - 0.07 * O.coh + 0.06 * pressure * Math.max(0, -composure(actor.p))), 0.02, 0.42);
+    const pTO = clamp(sigmoid(logit(CAL.tov[action] ?? 0.14) + tovE - 0.22 * ballZ + 0.15 * z(eff(def, 'stl')) + (press - 0.55) * 0.6 + 0.25 * Math.max(0, actor.F - 0.4) + 0.55 * mO * Math.max(0, 0.25 - LO.bh) - 0.07 * O.coh + 0.05 * O.feud + 0.06 * pressure * Math.max(0, -composure(actor.p))), 0.02, 0.42);
     if (!hurry && rng.chance(pTO)) {
       runClock(Math.max(1, t * 0.6));
       actor.line.tov++;
@@ -422,7 +425,8 @@ export function simulateGame(world: World, gameId: string, homeId: string, awayI
       : shotType === 'close' ? (eff(shooter, 'post') * 0.6 + eff(shooter, 'ins') * 0.4)
       : shotType === 'smid' ? (eff(shooter, 'mid') * 0.6 + eff(shooter, 'ins') * 0.4)
       : shotType === 'three' ? eff(shooter, 'three') : eff(shooter, 'mid');
-    const passBoost = assister ? CAL.bPass * (z(eff(assister, 'pass')) * 0.6 + 0.6) : 0;
+    // two players who read each other connect a little more cleanly; a feud or a stranger a little less (bounded, §13.5)
+    const passBoost = assister ? CAL.bPass * (z(eff(assister, 'pass')) * 0.6 + 0.6) * (1 + 0.12 * coop(assister.p, shooter.p)) : 0;
     let pMake = sigmoid(logit(shotType === 'three' ? base3 : CAL.baseMake[shotType]) + CAL.bShoot * z(skill) - CAL.bContest * contest + passBoost
       - CAL.bFat * Math.max(0, shooter.F - 0.35) + CAL.homeLogit * homeEdge(off) + (shotType === 'three' ? 0 : shotType === 'lmid' ? two * 0.4 : two) + 0.07 * pressure * composure(shooter.p));
     pMake = clamp(pMake, 0.08, 0.9);

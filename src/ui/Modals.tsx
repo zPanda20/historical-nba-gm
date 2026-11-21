@@ -24,6 +24,7 @@ import { hashStr } from '../sim/rng';
 import type { Player, World } from '../sim/types';
 import { TRAIT_KEYS, TRAIT_LABEL, TRAIT_SHORT, PROMISE_SHORT, PROMISE_TEXT, makePromise, isMonster, mentalityWord, orgTrustWord, personaBlurb, personaLabel, relationsOf, topMotives, trustWord } from '../sim/people';
 import type { PromiseKind } from '../sim/people';
+import { canRecruit, recruit, standingOf, strainOf } from '../sim/dynasty';
 
 function Shell({ title, children, wide, cls = '' }: { title?: any; children: any; wide?: boolean; cls?: string }) {
   return <div class="modal-bg" data-scope onClick={(e: any) => { if (e.target.classList.contains('modal-bg')) closeModal(); }}>
@@ -140,6 +141,7 @@ function Personality({ w, p, mine }: { w: World; p: Player; mine: boolean }) {
     <div class="traits pm-traits">{keys.map(k => <div title={TRAIT_LABEL[k]}><span>{TRAIT_SHORT[k]}</span><em>{traitWord((p.traits[k] ?? 50) + fuzz(k))}</em></div>)}</div>
     {!known && <div class="muted small">Interviews and workouts only. The rest shows once he plays.</div>}
     {known && (p as any).motives && <div class="pm-drives"><span>What drives him</span><b>{topMotives(p, 3).join(', ')}</b></div>}
+    {p.team && (() => { const s = standingOf(w, p); const st = strainOf(w, p); return s && <div class="pm-drives"><span>Standing</span><b>{s.label}{st.strain >= 45 ? ' · under strain' : ''}</b></div>; })()}
     {r && <div class="pm-rel">
       {mine && r.trustGM != null && <div><span>Toward you</span><b>{trustWord(r.trustGM)}</b></div>}
       {r.trustOrg != null && <div><span>Toward the team</span><b>{r.wantsOut ? 'Wants out' : orgTrustWord(r.trustOrg)}</b></div>}
@@ -155,6 +157,7 @@ function Personality({ w, p, mine }: { w: World; p: Player; mine: boolean }) {
       <div class="pm-pb">{PROMISE_KINDS.filter(k => !open.some(x => x.kind === k) && (k !== 'extension' || (p.contract?.years ?? 0) <= 2)).map(k =>
         <Btn kind="sm ghost" onClick={() => { const t = makePromise(w, p.id, k); commit(); toast(t); }}>{PROMISE_SHORT[k]}</Btn>)}</div>
     </div>}
+    {!mine && (() => { const R = canRecruit(w, p); return R && <div class="pm-pb"><Btn kind="sm ghost" onClick={() => { const t = recruit(w, p.id); commit(); toast(t); }}>Ask {R.name} to recruit him</Btn></div>; })()}
     <div class="muted small">{p.traitsNote || 'In this universe: simulated personality, not a claim about the real person.'}</div>
   </>;
 }

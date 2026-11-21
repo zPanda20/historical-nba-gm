@@ -391,3 +391,33 @@ export function aiDraftOffer(w: World): boolean {
     actions: [{ label: 'Accept trade', cmd: 'acceptAiTrade', arg: { ...best.offer } }, { label: 'Open in trade finder', cmd: 'tradeFinder', arg: { ...best.offer } }, { label: 'Decline', cmd: 'dismiss' }] });
   return true;
 }
+
+// ------------------------------------------------------------------ an AI team moves a star who has asked out (GDD §12.5, §13)
+/** The team holding him takes less than full value, because the whole league knows he has to go. */
+export function aiMoveUnhappyStars(w: World): string[] {
+  const done: string[] = [];
+  const u = w.meta.userTeam;
+  for (const A of Object.values(w.teams)) {
+    if (A.id === u) continue;
+    const star = A.roster.map(id => w.players[id]).find(p => p && (p as any).wantsOut === A.id && !p.contract?.twoWay && (p.contract?.years ?? 0) > 0);
+    if (!star) continue;
+    const sv = playerValue(star);
+    let best: { B: string; gets: string[]; v: number } | null = null;
+    for (const B of Object.values(w.teams)) {
+      if (B.id === A.id || B.id === u) continue;
+      const pool = B.roster.map(id => w.players[id]).filter(p => p && !p.contract?.twoWay && !p.injury && (p.contract?.years ?? 0) > 0).sort((a, b) => playerValue(b) - playerValue(a)).slice(0, 9);
+      const packs: string[][] = [];
+      for (let i = 0; i < pool.length; i++) { packs.push([pool[i].id]); for (let j = i + 1; j < pool.length; j++) if (playerValue(pool[i]) + playerValue(pool[j]) >= sv) packs.push([pool[i].id, pool[j].id]); }
+      for (const gets of packs) {
+        if (salaryMatch(w, A.id, B.id, [star.id], gets)) continue;
+        const a = sideValue(w, A.id, [star.id], gets, [], []), b = sideValue(w, B.id, gets, [star.id], [], []);
+        if (b.getV - b.giveV < 2 + b.giveV * 0.04 || a.getV < a.giveV * 0.62) continue;
+        const dB = (star.contract?.salary ?? 0) - gets.reduce((s, id) => s + (w.players[id].contract?.salary ?? 0), 0);
+        if (dB > 0 && capPayroll(w, B.id) + dB > aiSpendLine(w, B) * 1.08) continue;
+        if (!best || a.getV > best.v) best = { B: B.id, gets, v: a.getV };
+      }
+    }
+    if (best) done.push(executeTradeBetween(w, A.id, best.B, [star.id], best.gets, [], []));
+  }
+  return done;
+}

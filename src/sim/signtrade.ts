@@ -5,6 +5,7 @@
 //  - 2011 on: three or four seasons, raises held to the non-Bird limit, and the receiving team is hard-capped at the apron
 //    (the first apron from 2023): it cannot be above it once the deal is done;
 //  - the player has to want the destination; salary matching applies to both teams as in any trade.
+import { teamUpSatTargets } from './dynasty';
 import type { Player, World } from './types';
 import { clamp, stream } from './rng';
 import { playerValue } from './coach';
@@ -144,6 +145,30 @@ export function aiSignAndTrades(w: World, log: string[]) {
   const u = w.meta.userTeam;
   ((F as any).satProposals ??= {});
   const doneThisSummer: string[] = ((F as any).satTeams ??= []);
+  // a team-up the destination has no room for: the team holding the player's Bird rights takes something back rather than nothing
+  for (const T of teamUpSatTargets(w)) {
+    const p = w.players[T.pid];
+    if (!p || (F as any).satProposals[p.id] || T.dest === u && T.from === u) continue;
+    const terms = defaultTerms(w, p, T.from);
+    const lim = birdLevel(p, T.from, season) ? birdLimit(w, p, birdLevel(p, T.from, season)!, season) : null;
+    if (lim != null) terms.salary = Math.min(terms.salary, lim);
+    const back = matchingPieces(w, T.dest, T.from, terms.salary);
+    if (!back) continue;
+    if (T.from === u) {
+      const offer: TradeOffer = { other: T.dest, give: [], get: back, givePicks: [], getPicks: [], sat: terms };
+      if (signTradeCheck(w, offer) || withSat(w, offer, o => salaryMatch(w, u, T.dest, o.give, o.get))) continue;
+      (F as any).satProposals[p.id] = offer;
+      addMessage(w, { date: w.season.day, from: w.teams[T.dest].gm, role: 'GM', subject: `Sign-and-trade for ${p.name}`, urgent: 3, tag: 'Decision', deadline: `${w.season.year + 1}-07-${String(Math.min(31, F.day + 3)).padStart(2, '0')}`,
+        body: `${p.name} is set on joining his friends in ${w.teams[T.dest].city}. They have no cap room, so they propose a sign-and-trade: we re-sign him at ${fmtM(terms.salary)} for ${terms.years} seasons and send him there for ${back.map(id => w.players[id].name).join(', ') || 'nothing'}. Say no and he may walk for nothing.`,
+        actions: [{ label: 'Accept the sign-and-trade', cmd: 'satAccept', arg: { pid: p.id } }, { label: 'Turn it down', cmd: 'satDecline', arg: { pid: p.id } }] });
+      continue;
+    }
+    if (T.dest === u) continue; // the user's front office builds its own deals
+    if (aiSatLegal(w, T.from, T.dest, terms, back)) continue;
+    doSignTrade(w, terms, T.dest, [], back, [], []);
+    doneThisSummer.push(T.from, T.dest);
+    log.push(`${p.name} joined ${w.teams[T.dest].name} in a sign-and-trade.`);
+  }
   if (doneThisSummer.length >= 6) return; // a handful a summer at most
   let tries = 0;
   const pool = w.freeAgents.map(id => w.players[id]).filter(p => p && !p.retired && playerValue(p) >= 68 && (p as any).bird && (p as any).renounced !== (p as any).bird && !F.sheets[p.id] && !(F as any).satProposals[p.id])
