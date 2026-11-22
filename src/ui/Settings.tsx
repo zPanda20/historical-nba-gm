@@ -1,6 +1,6 @@
 import { useStore, setUI, setWorld, toast, ui } from './store';
 import { Btn } from './util';
-import { saveWorld, exportSave } from './saves';
+import { saveWorld, exportSave, exportChronicle } from './saves';
 import { MODEL_VERSION } from '../sim/rng';
 
 export function Settings() {
@@ -13,6 +13,7 @@ export function Settings() {
           <Btn kind="big" auto onClick={() => setUI({ settings: false })}>Resume</Btn>
           <Btn onClick={async () => { await saveWorld(w!); toast('Saved.'); }}>Save now</Btn>
           <Btn onClick={() => exportSave(w!)}>Export save file</Btn>
+          <Btn onClick={() => { exportChronicle(w!); toast('League chronicle exported. Upload it to Claude and ask for the story of your league.'); }}>Export league chronicle</Btn>
           <Btn kind="ghost" onClick={async () => { await saveWorld(w!); setWorld(null); setUI({ mode: 'title', settings: false, screen: 'home' }); }}>Save & quit to title</Btn>
         </div>
         <div class="set-row"><span>People page look</span><div class="seg sm">{[['auto', 'By era'], ['70s', '1970s'], ['90s', '1990s'], ['00s', '2000s'], ['20s', '2020s']].map(([k, l]) => <button data-nav class={(ui.peopleEra ?? 'auto') === k ? 'on' : ''} onClick={() => setUI({ peopleEra: k })}>{l}</button>)}</div><small>Preview how the desk changes over the decades.</small></div>

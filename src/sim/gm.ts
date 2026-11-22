@@ -1,4 +1,5 @@
 // GM layer: front-office commands, AI GM behaviour, owner, agents, coach requests (GDD §8, §11, §12, §15).
+import { chron } from './chronicle';
 import { plansFor, strainOf } from './dynasty';
 import type { ClockState, Player, Team, World } from './types';
 import { doSignTrade } from './signtrade';
@@ -294,6 +295,7 @@ export function ownerSeasonReview(w: World) {
   w.gmRep = clamp(w.gmRep + delta * 0.5 + (champion ? 10 : 0), 0, 100);
   if (w.meta.mode === 'career' && s < 18 && w.owner.patience < 60) {
     w.meta.fired = true;
+    chron(w, 'fired', `${w.meta.gmName} fired as GM of ${team.abbr} after ${team.w}-${team.l} (owner satisfaction ${Math.round(s)}) [USER]`);
     openJobMarket(w);
     body += ' I\'m making a change at general manager.';
     addMessage(w, { date: w.season.day, from: w.owner.name, role: 'Owner', subject: 'You have been fired', body, urgent: 3, tag: 'Owner', actions: [{ label: 'Find a new job', cmd: 'jobs' }, { label: 'Continue here in sandbox mode', cmd: 'sandbox' }] });

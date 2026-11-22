@@ -11,6 +11,7 @@ import { clamp, sigmoid, stream } from './rng';
 import { playerValue } from './coach';
 import { addEvent, addMessage, addNews } from './world';
 import { isImpact } from './impact';
+import { chron } from './chronicle';
 
 // ------------------------------------------------------------------ vocabulary
 export const TRAIT_KEYS = ['drive', 'ambition', 'ego', 'team', 'loyalty', 'assert', 'poise', 'adapt', 'patience', 'risk', 'discipline', 'social'] as const;
@@ -294,6 +295,7 @@ function stepCulture(w: World, t: Team, k: number) {
   });
   const old = c.label;
   c.label = labelFor(c);
+  if (old && old !== c.label && (['Championship standard', 'Fractured', 'Driven but divided'].includes(c.label) || old === 'Championship standard')) chron(w, 'culture', `${t.abbr} locker room: ${old} -> ${c.label}${c.leaders[0] && w.players[c.leaders[0]] ? `; tone set by ${w.players[c.leaders[0]].name}` : ''}`, c.leaders.slice(0, 1));
   if (old && old !== c.label) { c.since = w.season.year; if (isUser(w, t.id)) addMessage(w, { date: w.season.day, from: w.coaches[t.coach]?.name ?? 'Coach', role: 'Coach', subject: `The locker room: ${old} → ${c.label}`, body: cultureSentence(w, t), urgent: 1, tag: 'Locker room', actions: [{ label: 'Open the locker room', cmd: 'goto', arg: 'roster:locker' }] }); }
   return c;
 }
@@ -426,6 +428,13 @@ export function peopleWeek(w: World) {
       const trustC = coach ? (trustIn(w, p.id, coach.id) - 50) * 0.03 : 0;
       p.morale = clamp((p.morale ?? 60) + cu + trustC + (t.streak >= 4 ? 0.6 : t.streak <= -4 ? -0.6 : 0) - ((p as any).wantsOut ? 0.8 : 0), 0, 100);
     }
+    // feuds anywhere in the league, noted once a season
+    const fn = ((t as any).feudNoted ??= {}) as Record<string, number>;
+    for (let i = 0; i < Math.min(6, core.length); i++) for (let j = i + 1; j < Math.min(6, core.length); j++) {
+      const a = core[i], b = core[j], k = [a.id, b.id].sort().join('|');
+      if (fn[k] === S.year || Math.max(rel(w, a.id, b.id)?.[3] ?? 0, rel(w, b.id, a.id)?.[3] ?? 0) < 65) continue;
+      fn[k] = S.year; chron(w, 'feud', `Feud inside ${t.abbr}: ${a.name} and ${b.name}`, [a.id, b.id]);
+    }
     stepCulture(w, t, 0.07);
     mentorships(w, t, ps);
     if (isUser(w, t.id)) lockerRoomEvents(w, t, ps);
@@ -465,6 +474,7 @@ function mentorships(w: World, t: Team, ps: Player[]) {
     (y as any).mentor = best.v.id;
     nudge(edge(w, y.id, best.v.id), 0, 10); nudge(edge(w, best.v.id, y.id), 0, 8);
     remember(w, y.id, best.v.id, `${best.v.name} took ${y.name} under his wing`);
+    if (playerValue(best.v) >= 76 || mentality(best.v) >= 92) chron(w, 'mentor', `${best.v.name} (${t.abbr}) took ${y.name} (age ${y.age}) under his wing`, [best.v.id, y.id]);
     if (isUser(w, t.id)) addMessage(w, { date: w.season.day, from: w.coaches[t.coach]?.name ?? 'Coach', role: 'Coach', subject: `${best.v.name} has taken ${y.name} under his wing`,
       body: `They're in the gym early together most days now. ${first(best.v.name)}'s habits are the kind that rub off; expect ${first(y.name)}'s work ethic to move toward his.`, urgent: 0, tag: 'Locker room' });
   }
@@ -485,6 +495,7 @@ function lockerRoomEvents(w: World, t: Team, ps: Player[]) {
       for (const p of ps) p.morale = clamp((p.morale ?? 60) + (good ? 5 : -2), 0, 100);
       if (good) c.uni = Math.min(99, c.uni + 2.5);
       else { const low = ps.filter(p => p !== lead && t$(p, 'discipline') < 55).slice(0, 2); for (const p of low) { nudge(edge(w, lead.id, p.id), 3, 12); nudge(edge(w, p.id, lead.id), 3, 10); } }
+      chron(w, 'meeting', `${lead.name} called a players-only meeting after ${-t.streak} straight losses (${t.abbr}): ${good ? 'it worked' : 'it turned heated'} [USER]`, [lead.id]);
       addMessage(w, { date: S.day, from: coach?.name ?? 'Coach', role: 'Coach', subject: `${lead.name} called a players-only meeting`,
         body: good ? `After ${-t.streak} straight losses ${first(lead.name)} closed the doors and said what needed saying. The room listened. Practice was sharper the next day.`
           : `After ${-t.streak} straight losses ${first(lead.name)} closed the doors. It got loud, and not everyone took it well. Some of this will linger.`, urgent: 1, tag: 'Locker room' });
@@ -515,22 +526,24 @@ export function mediate(w: World, aId: string, bId: string, how: 'gm' | 'coach' 
   if (!a || !b || a.team !== b.team) return 'That has resolved itself: they are no longer teammates.';
   const t = w.teams[a.team!], coach = w.coaches[t.coach];
   const r = stream(w.meta.seed, 'mediate', w.season.day, aId, bId);
+  const note = (res: string) => { chron(w, 'mediation', `[USER] feud ${a.name} vs ${b.name}: GM chose ${how === 'gm' ? 'to meet both' : how === 'coach' ? 'to let the coach handle it' : 'to stay out'}; ${res}`, [aId, bId]); };
   const ea = edge(w, a.id, b.id), eb = edge(w, b.id, a.id);
   if (how === 'gm') {
     const ok = r.chance(sigmoid((trustIn(w, a.id, 'gm') + trustIn(w, b.id, 'gm') - 100) / 30 + (w.gmRep - 50) / 40 + (t$(a, 'poise') + t$(b, 'poise') - 120) / 60 + 0.3));
-    if (ok) { nudge(ea, 3, -30); nudge(eb, 3, -30); nudge(ea, 0, 5); nudge(eb, 0, 5); nudge(edge(w, a.id, 'gm'), 2, 4); nudge(edge(w, b.id, 'gm'), 2, 4); remember(w, a.id, b.id, `Cleared the air with ${b.name} in a meeting with the GM`); return `You sat them down together. It was uncomfortable, then it was useful. They shook on it, and both said they appreciated you stepping in.`; }
+    if (ok) { nudge(ea, 3, -30); nudge(eb, 3, -30); nudge(ea, 0, 5); nudge(eb, 0, 5); nudge(edge(w, a.id, 'gm'), 2, 4); nudge(edge(w, b.id, 'gm'), 2, 4); remember(w, a.id, b.id, `Cleared the air with ${b.name} in a meeting with the GM`); note('it worked'); return `You sat them down together. It was uncomfortable, then it was useful. They shook on it, and both said they appreciated you stepping in.`; }
     nudge(ea, 3, -8); nudge(eb, 3, -8); nudge(edge(w, a.id, 'gm'), 2, -5); remember(w, a.id, 'gm', 'Felt the front office took sides in his dispute');
+    note(`it failed; ${a.name} felt the GM took sides`);
     return `The meeting didn't land. ${first(a.name)} left feeling the front office took ${first(b.name)}'s side. It has cooled a little, but he'll remember it.`;
   }
   if (how === 'coach') {
     if (!coach) return 'There is no coach to hand it to.';
     const ok = r.chance(sigmoid((coach.communication - 55) / 12 + (trustIn(w, a.id, coach.id) + trustIn(w, b.id, coach.id) - 100) / 40));
-    if (ok) { nudge(ea, 3, -25); nudge(eb, 3, -25); nudge(edge(w, a.id, coach.id), 2, 3); nudge(edge(w, b.id, coach.id), 2, 3); return `${coach.name} handled it his way: film, a hard practice and a word with each of them. It worked. They're back to playing for each other.`; }
-    nudge(ea, 3, 5); nudge(edge(w, a.id, coach.id), 2, -5);
+    if (ok) { nudge(ea, 3, -25); nudge(eb, 3, -25); nudge(edge(w, a.id, coach.id), 2, 3); nudge(edge(w, b.id, coach.id), 2, 3); note('the coach fixed it'); return `${coach.name} handled it his way: film, a hard practice and a word with each of them. It worked. They're back to playing for each other.`; }
+    nudge(ea, 3, 5); nudge(edge(w, a.id, coach.id), 2, -5); note('the coach failed');
     return `${coach.name} tried, but ${first(a.name)} didn't buy it. The coach has lost a little of him, and the friction is still there.`;
   }
-  if (t$(a, 'assert') >= 85 && t$(b, 'assert') >= 80 && r.chance(0.4)) { nudge(ea, 3, 10); nudge(eb, 3, 8); const c = culture(t); if (c) c.uni = Math.max(5, c.uni - 3); return `Left alone, it got worse. Teammates are starting to pick sides.`; }
-  nudge(ea, 3, -10); nudge(eb, 3, -10);
+  if (t$(a, 'assert') >= 85 && t$(b, 'assert') >= 80 && r.chance(0.4)) { nudge(ea, 3, 10); nudge(eb, 3, 8); const c = culture(t); if (c) c.uni = Math.max(5, c.uni - 3); note('it got worse; teammates picked sides'); return `Left alone, it got worse. Teammates are starting to pick sides.`; }
+  nudge(ea, 3, -10); nudge(eb, 3, -10); note('it cooled off');
   return `You let them sort it out. Professionals mostly do; it has cooled off for now.`;
 }
 

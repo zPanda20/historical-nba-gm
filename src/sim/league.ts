@@ -9,6 +9,7 @@ import { arcDev, hypeOf } from './impact';
 import { cultureDevMul, declineMul, mentality, peopleOffseason, peopleSeasonStart, peopleWeek } from './people';
 import { dynastyOffseason, dynastyWeek, settleSuperteams } from './dynasty';
 import { aiPayrollTrim, aiSalaryDumps, updateAiClocks } from './payroll';
+import { noteGame, recordSeason } from './chronicle';
 import { tradeDeadline } from './rules';
 import { makeContract } from './contracts';
 import { assessLuxuryTax, capRules, rookieScale, teamPayroll, fmtM, minSalary, yos } from './cap';
@@ -31,6 +32,7 @@ export function applyResult(world: World, g: GameRec, res: GameResult, keepLog: 
   g.hs = res.hs; g.as = res.as; g.ot = res.ot; g.played = true;
   const user = world.meta.userTeam;
   g.box = res.box;
+  noteGame(world, g);
   if (keepLog && (g.home === user || g.away === user || g.playoff)) g.log = res.log;
   const isPO = !!g.playoff;
   for (const [side, tid] of [['home', g.home], ['away', g.away]] as const) {
@@ -437,6 +439,7 @@ function endSeason(world: World, runnerUp: string) {
   const fin = S.playoffs?.series.find(x => x.round === 4);
   world.pastSeasons.push({ year: S.year, champion: S.champion!, runnerUp, finals: fin ? `${Math.max(fin.wHi, fin.wLo)}–${Math.min(fin.wHi, fin.wLo)}` : undefined, awards: S.awards ?? {}, standings: standings(world).map(t => ({ team: t.id, w: t.w, l: t.l })),
     names: Object.fromEntries(Object.values(world.teams).map(t => [t.id, { abbr: t.abbr, city: t.city, name: t.name, logo: t.logoKey ?? t.abbr }])) } as any);
+  recordSeason(world);
   ownerSeasonReview(world);
   updateAiClocks(world, true); // the draft and free agency follow each team's read of where it is
   setupDraft(world);

@@ -11,6 +11,7 @@ import { playerValue } from './coach';
 import { addEvent, addMessage, addNews } from './world';
 import { culture, motive, rel, trustIn } from './people';
 import { capRoom } from './cap';
+import { chron } from './chronicle';
 import { aiMoveUnhappyStars } from './trade';
 import { tradeDeadline } from './rules';
 
@@ -211,7 +212,7 @@ export function crisis(w: World, nId: string, iId: string, how: string, who?: st
   const gm = (p: Player) => edge(w, p.id, 'gm');
   const cool = (d: number) => { if (P) P.strain = clamp(P.strain + d, 0, 100); };
   const conf = (d: number) => { bump(edge(w, N.id, I.id), 3, d); bump(edge(w, I.id, N.id), 3, d); };
-  const log = (s: string) => { const D = dynOf(t); D.log.unshift({ d: w.season.day, t: s }); D.log.length = Math.min(D.log.length, 8); };
+  const log = (s: string) => { const D = dynOf(t); D.log.unshift({ d: w.season.day, t: s }); D.log.length = Math.min(D.log.length, 8); chron(w, 'crisis', `[USER] ${N.name} vs ${I.name} (${t.abbr}): ${s}`, [N.id, I.id]); };
   switch (how) {
     case 'meet': {
       const ok = r.chance(sigmoid((trustIn(w, N.id, 'gm') + trustIn(w, I.id, 'gm') - 100) / 30 + (w.gmRep - 50) / 40 + (t$(N, 'poise') + t$(I, 'poise') - 130) / 60 + 0.2));

@@ -6,6 +6,7 @@ import { eraRules, setEraYear } from './history';
 import { classData, injectClass } from './seasons';
 import { shapeCareer, shapeDraftOutlier, hypeOf } from './impact';
 import { initPeople } from './people';
+import { noteEvent } from './chronicle';
 
 export const SCHEMA = 1;
 
@@ -128,4 +129,5 @@ export function addEvent(world: World, type: string, text: string, ids?: string[
   world.log.seq++;
   world.events.push({ seq: world.log.seq, date: world.season.day, type, text, ids });
   if (world.events.length > 3000) world.events.splice(0, world.events.length - 3000);
+  noteEvent(world, type, text, ids);
 }

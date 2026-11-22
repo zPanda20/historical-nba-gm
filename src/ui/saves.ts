@@ -1,4 +1,5 @@
 // Save system: IndexedDB (gzip when the browser supports CompressionStream) + file export/import.
+import { buildChronicle } from '../sim/export';
 import type { World } from '../sim/types';
 
 const DB = 'historical-nba-gm', STORE = 'saves';
@@ -72,3 +73,14 @@ export async function importSaveFile(f: File): Promise<World> {
   return w;
 }
 export function lastSaveId(): string | null { try { return localStorage.getItem('hnba-last'); } catch { return null; } }
+
+/** League chronicle for an AI writer: one Markdown file of causes and results (see sim/export.ts). */
+export function exportChronicle(w: World) {
+  const text = buildChronicle(w);
+  const a = document.createElement('a');
+  const t = w.teams[w.meta.userTeam];
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }));
+  a.download = `league-chronicle-${t.abbr}-${w.season.year}.md`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
